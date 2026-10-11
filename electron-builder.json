@@ -1,0 +1,50 @@
+{
+  "appId": "com.jrzscore.ipsi2026",
+  "productName": "JRZ SCORE IPSI 2026",
+  "copyright": "Copyright © 2026 JRZ SCORE Digital Scoring Pencak Silat",
+  "directories": {
+    "output": "release",
+    "buildResources": "public"
+  },
+  "files": [
+    "dist/**/*",
+    "dist-server/**/*",
+    "electron/**/*",
+    "public/jrzscoreutama.ico",
+    "public/jrzscoreutama.png",
+    "package.json"
+  ],
+  "extraMetadata": {
+    "main": "electron/main.cjs"
+  },
+  "win": {
+    "icon": "public/jrzscoreutama.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "${productName}-${target}-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "JRZ SCORE IPSI 2026",
+    "installerIcon": "public/jrzscoreutama.ico",
+    "uninstallerIcon": "public/jrzscoreutama.ico",
+    "installerHeaderIcon": "public/jrzscoreutama.ico",
+    "runAfterFinish": true,
+    "deleteAppDataOnUninstall": false
+  },
+  "portable": {
+    "artifactName": "${productName}-Portable-${version}.${ext}"
+  }
+}

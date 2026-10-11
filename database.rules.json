@@ -1,0 +1,58 @@
+{
+  "rules": {
+    ".read": true,
+    ".write": true,
+    "arenas": {
+      "$arena": {
+        "activeMatch": {
+          ".read": true,
+          ".write": true
+        },
+        "presence": {
+          ".read": true,
+          ".write": true
+        },
+        "schedule": {
+          ".read": true,
+          ".write": true
+        },
+        "activeJuryPresses": {
+          ".read": true,
+          ".write": true
+        }
+      }
+    },
+    "appStorage": {
+      ".read": true,
+      ".write": true
+    },
+    "activeMatch": {
+      ".read": true,
+      ".write": true
+    },
+    "schedule": {
+      ".read": true,
+      ".write": true
+    },
+    "users": {
+      ".read": true,
+      ".write": true
+    },
+    "otps": {
+      ".read": true,
+      ".write": true
+    },
+    "licenses": {
+      ".read": true,
+      ".write": true
+    },
+    "license_by_req": {
+      ".read": true,
+      ".write": true
+    },
+    "license_keys": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}

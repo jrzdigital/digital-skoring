@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/x-icon" href="/jrzscoreutama.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#070d1e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>JRZ SCORE - Digital Scoring Tanding (IPSI 2026 & PERSILAT)</title>
+    <meta name="description" content="Aplikasi Khusus Digital Scoring Pencak Silat Kategori Tanding Resmi Peraturan IPSI 2026 & PERSILAT (Scoreboard LED Arena, Ketua Dewan, Juri 1-3, dan Sekretaris Pertandingan)" />
+    <meta property="og:title" content="JRZ SCORE - Digital Scoring Tanding (IPSI 2026 & PERSILAT)" />
+    <meta property="og:description" content="Aplikasi Khusus Digital Scoring Pencak Silat Kategori Tanding Resmi Peraturan IPSI 2026 & PERSILAT (Scoreboard LED Arena, Ketua Dewan, Juri 1-3, dan Sekretaris Pertandingan)" />
+
+    <!-- =====================================================================
+         INDEX 1: BUILD SECARA OFFLINE MELALUI LOCALHOST / POWERSHELL
+         Aktif secara otomatis saat berjalan di localhost, 127.0.0.1, LAN,
+         atau hasil build offline via PowerShell
+         ===================================================================== -->
+    <script id="jrz-index-offline-localhost">
+      (function() {
+        if (typeof window !== 'undefined') {
+          // Immediately clear any stale service workers and caches in preview/dev before modules load
+          if ('serviceWorker' in navigator && (window.location.hostname.includes('run.app') || window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              var hadController = !!navigator.serviceWorker.controller;
+              var unregPromises = regs.map(function(reg) { return reg.unregister(); });
+              Promise.all(unregPromises).then(function() {
+                if ('caches' in window) {
+                  caches.keys().then(function(names) {
+                    return Promise.all(names.map(function(name) { return caches.delete(name); }));
+                  }).then(function() {
+                    if (hadController && !sessionStorage.getItem('jrz_sw_cleared_v3')) {
+                      sessionStorage.setItem('jrz_sw_cleared_v3', '1');
+                      window.location.reload();
+                    }
+                  });
+                } else if (hadController && !sessionStorage.getItem('jrz_sw_cleared_v3')) {
+                  sessionStorage.setItem('jrz_sw_cleared_v3', '1');
+                  window.location.reload();
+                }
+              });
+            }).catch(function() {});
+          }
+
+          const origError = console.error;
+          console.error = function() {
+            if (arguments.length > 0 && typeof arguments[0] === 'string' && (arguments[0].includes('[vite]') || arguments[0].includes('WebSocket') || arguments[0].includes('ws://') || arguments[0].includes('wss://'))) {
+              return;
+            }
+            return origError.apply(console, arguments);
+          };
+          const origWarn = console.warn;
+          console.warn = function() {
+            if (arguments.length > 0 && typeof arguments[0] === 'string' && (arguments[0].includes('[vite]') || arguments[0].includes('WebSocket'))) {
+              return;
+            }
+            return origWarn.apply(console, arguments);
+          };
+          window.addEventListener('error', function(e) {
+            const msg = (e && (e.message || '')) + '';
+            if (msg.includes('[vite]') || msg.includes('WebSocket') || msg.includes('reading \'send\'')) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+            }
+          }, true);
+          window.addEventListener('unhandledrejection', function(e) {
+            const reason = (e && e.reason) ? (e.reason.message || e.reason + '') : '';
+            if (reason.includes('[vite]') || reason.includes('WebSocket') || reason.includes('reading \'send\'')) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+            }
+          }, true);
+          window.addEventListener('vite:preloadError', function() {
+            window.location.reload();
+          });
+        }
+      })();
+    </script>
+
+    <!-- =====================================================================
+         INDEX 2: SINKRONISASI FIREBASE & GITHUB PAGES
+         Aktif secara otomatis saat di-sync & dijalankan melalui GitHub Pages
+         (*.github.io) atau Firebase Hosting (*.web.app / *.firebaseapp.com)
+         ===================================================================== -->
+    <script id="jrz-index-firebase-github">
+      (function() {
+        if (typeof window === 'undefined') return;
+
+        var host = window.location.hostname || '';
+        var isGitHubPages = host.includes('github.io');
+        var isStaticCloud =
+          isGitHubPages ||
+          host.includes('web.app') ||
+          host.includes('firebaseapp.com');
+
+        // Jika berjalan secara offline / localhost (PowerShell), gunakan murni Index 1 di atas
+        if (!isStaticCloud) {
+          window.__JRZ_INDEX_MODE__ = 'OFFLINE_LOCALHOST';
+          return;
+        }
+
+        window.__JRZ_INDEX_MODE__ = 'FIREBASE_GITHUB_SYNC';
+
+        // Konfigurasi Firebase Realtime Database & API Key untuk sinkronisasi real-time
+        const firebaseConfig = {
+          apiKey: "AIzaSyDoTaTgw5dqhDkZocgpc7rJ68Ewopr4yHs",
+          authDomain: "jrz-score.firebaseapp.com",
+          databaseURL: "https://jrz-score-default-rtdb.asia-southeast1.firebasedatabase.app",
+          projectId: "jrz-score",
+          storageBucket: "jrz-score.firebasestorage.app",
+          messagingSenderId: "815167875593",
+          appId: "1:815167875593:web:e954759fe7d675c5ab26d8",
+          measurementId: "G-J2QTD6JSW8"
+        };
+        window.firebaseConfig = firebaseConfig;
+        window.__JRZ_FIREBASE_CONFIG__ = firebaseConfig;
+        window.__JRZ_FIREBASE_API_KEY__ = firebaseConfig.apiKey;
+        window.__JRZ_FIREBASE_RTDB_URL__ = firebaseConfig.databaseURL;
+
+        var pathName = window.location.pathname || '/';
+        var baseDir = pathName.endsWith('/')
+          ? pathName
+          : pathName.substring(0, pathName.lastIndexOf('/') + 1);
+        window.__JRZ_BASE_DIR__ = baseDir;
+
+        // Sesuaikan href favicon, touch-icon, dan manifest untuk subpath GitHub Pages
+        if (isGitHubPages && baseDir !== '/') {
+          document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"], link[rel="manifest"]').forEach(function(linkEl) {
+            var rawHref = linkEl.getAttribute('href');
+            if (rawHref && rawHref.startsWith('/') && !rawHref.startsWith(baseDir)) {
+              linkEl.setAttribute('href', baseDir + rawHref.slice(1));
+            }
+          });
+        }
+
+        var origFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
+
+        // Pada GitHub Pages / Static Cloud tanpa server Express lokal, percepat pemanggilan /api/*
+        // agar langsung beralih ke Firebase Realtime Database tanpa menunggu 404 timeout
+        if (origFetch) {
+          window.fetch = function(input, init) {
+            var urlStr = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+            if (
+              urlStr.startsWith('/api/') ||
+              urlStr.indexOf(window.location.origin + '/api/') === 0
+            ) {
+              return Promise.resolve(
+                new Response(JSON.stringify({ ok: false, offlineStatic: true }), {
+                  status: 404,
+                  headers: { 'Content-Type': 'application/json' }
+                })
+              );
+            }
+            return origFetch(input, init);
+          };
+        }
+
+        // Resolusi otomatis path gambar/ikon (/LogoIPSI.png, /Punch.png, dll.) khusus pada subpath GitHub Pages
+        if (isGitHubPages) {
+          function resolveStaticAssetPath(rawUrl) {
+            if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+            if (
+              rawUrl.startsWith('data:') ||
+              rawUrl.startsWith('blob:') ||
+              rawUrl.startsWith('http://') ||
+              rawUrl.startsWith('https://') ||
+              rawUrl.startsWith('//')
+            ) {
+              return rawUrl;
+            }
+            var hasRawTsx = !!document.querySelector('script[src*="/src/main.tsx"]');
+            if (rawUrl.startsWith('/') && !rawUrl.startsWith(baseDir)) {
+              return hasRawTsx ? (baseDir + 'public' + rawUrl) : (baseDir + rawUrl.slice(1));
+            }
+            return rawUrl;
+          }
+
+          try {
+            var imgSrcDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+            if (imgSrcDesc && imgSrcDesc.set && imgSrcDesc.get) {
+              Object.defineProperty(HTMLImageElement.prototype, 'src', {
+                configurable: true,
+                enumerable: true,
+                get: function() {
+                  return imgSrcDesc.get.call(this);
+                },
+                set: function(val) {
+                  imgSrcDesc.set.call(this, resolveStaticAssetPath(val));
+                }
+              });
+            }
+          } catch (e) {}
+
+          function fixImgElement(img) {
+            if (!img || img.tagName !== 'IMG') return;
+            var rawAttr = img.getAttribute('src');
+            var hasRawTsx = !!document.querySelector('script[src*="/src/main.tsx"]');
+            if (rawAttr && rawAttr.startsWith('/') && !rawAttr.startsWith(baseDir)) {
+              img.setAttribute('src', hasRawTsx ? (baseDir + 'public' + rawAttr) : (baseDir + rawAttr.slice(1)));
+            }
+            if (!img.__jrzErrorFallbackBound) {
+              img.__jrzErrorFallbackBound = true;
+              img.addEventListener('error', function() {
+                var cur = img.getAttribute('src') || '';
+                if (cur.indexOf(baseDir + 'public/') === 0 && !img.__jrzRetriedWithoutPublic) {
+                  img.__jrzRetriedWithoutPublic = true;
+                  img.setAttribute('src', baseDir + cur.slice((baseDir + 'public/').length));
+                } else if (cur.indexOf(baseDir) === 0 && cur.indexOf(baseDir + 'public/') !== 0 && !img.__jrzRetriedWithPublic) {
+                  img.__jrzRetriedWithPublic = true;
+                  img.setAttribute('src', baseDir + 'public/' + cur.slice(baseDir.length));
+                }
+              });
+            }
+          }
+
+          window.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('img').forEach(fixImgElement);
+            if (typeof MutationObserver !== 'undefined') {
+              var observer = new MutationObserver(function(mutations) {
+                mutations.forEach(function(m) {
+                  if (m.type === 'attributes' && m.target && m.target.tagName === 'IMG') {
+                    fixImgElement(m.target);
+                  } else if (m.addedNodes && m.addedNodes.length) {
+                    m.addedNodes.forEach(function(node) {
+                      if (node && node.nodeType === 1) {
+                        if (node.tagName === 'IMG') fixImgElement(node);
+                        if (node.querySelectorAll) {
+                          node.querySelectorAll('img').forEach(fixImgElement);
+                        }
+                      }
+                    });
+                  }
+                });
+              });
+              observer.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['src']
+              });
+            }
+          });
+        }
+
+        // Pre-hydrate penyimpanan aplikasi dari Firebase Realtime Database saat di GitHub / Cloud
+        try {
+          var rtdbFetcher = origFetch || window.fetch;
+          rtdbFetcher(window.__JRZ_FIREBASE_RTDB_URL__ + '/appStorage.json')
+            .then(function(res) { return res.ok ? res.json() : null; })
+            .then(function(entries) {
+              if (!entries || typeof entries !== 'object') return;
+              Object.keys(entries).forEach(function(k) {
+                var item = entries[k];
+                if (item && typeof item.key === 'string' && typeof item.value === 'string') {
+                  if (window.localStorage.getItem(item.key) === null) {
+                    window.localStorage.setItem(item.key, item.value);
+                    window.dispatchEvent(new StorageEvent('storage', {
+                      key: item.key,
+                      newValue: item.value
+                    }));
+                  }
+                }
+              });
+            })
+            .catch(function() {});
+        } catch (e) {}
+
+        // Bersihkan service worker pada domain github.io
+        if ('serviceWorker' in navigator && isGitHubPages) {
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            regs.forEach(function(reg) { reg.unregister(); });
+          }).catch(function() {});
+        }
+
+        // Fungsi pemuat bundle terkompilasi otomatis khusus untuk GitHub Pages
+        window.__loadJrzStaticBundle = function() {
+          if (window.__JRZ_STATIC_BUNDLE_LOADING__ || window.__JRZ_ROOT_MOUNTED__) return;
+          window.__JRZ_STATIC_BUNDLE_LOADING__ = true;
+
+          var ghOwner = host.split('.')[0] || '';
+          var pathSegments = (window.location.pathname || '/').split('/').filter(Boolean);
+          var ghRepo = pathSegments[0] || '';
+
+          function showSyncStatus(msg) {
+            if (window.__JRZ_ROOT_MOUNTED__) return;
+            var root = document.getElementById('root');
+            if (!root || root.querySelector('[data-jrz-mounted]')) return;
+            var statusEl = document.getElementById('jrz-gh-loader-status');
+            if (statusEl) {
+              statusEl.textContent = msg;
+              return;
+            }
+            root.innerHTML =
+              '<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#070d1e;color:#f8fafc;font-family:system-ui,-apple-system,sans-serif;padding:24px;text-align:center;">' +
+              '<div style="width:52px;height:52px;border:4px solid rgba(16,185,129,0.2);border-top-color:#10b981;border-radius:50%;animation:jrzspin 0.9s linear infinite;margin-bottom:20px;"></div>' +
+              '<h2 style="margin:0 0 8px 0;font-size:18px;font-weight:800;letter-spacing:0.06em;color:#34d399;">JRZ SCORE - DIGITAL SCORING IPSI</h2>' +
+              '<p id="jrz-gh-loader-status" style="margin:0;font-size:13px;color:#94a3b8;max-width:460px;line-height:1.5;">' +
+              msg +
+              '</p>' +
+              '<style>@keyframes jrzspin{to{transform:rotate(360deg)}}</style>' +
+              '</div>';
+          }
+
+          function executeBundleText(cssText, jsText) {
+            if (window.__JRZ_ROOT_MOUNTED__ || window.__JRZ_BUNDLE_EXECUTED__) return;
+            window.__JRZ_BUNDLE_EXECUTED__ = true;
+            if (cssText) {
+              var styleEl = document.createElement('style');
+              styleEl.textContent = cssText;
+              document.head.appendChild(styleEl);
+            }
+            var blob = new Blob([jsText], { type: 'text/javascript' });
+            var blobUrl = URL.createObjectURL(blob);
+            var s = document.createElement('script');
+            s.type = 'module';
+            s.src = blobUrl;
+            document.body.appendChild(s);
+          }
+
+          function tryFetchBundlePair(cssUrl, jsUrl) {
+            var fetcher = origFetch || window.fetch;
+            return fetcher(jsUrl, { cache: 'no-store' }).then(function(jsRes) {
+              if (!jsRes.ok) throw new Error('JS_NOT_FOUND');
+              var ct = jsRes.headers.get('content-type') || '';
+              if (ct.indexOf('text/html') !== -1) throw new Error('HTML_FALLBACK');
+              return jsRes.text().then(function(jsText) {
+                if (!jsText || jsText.trim().indexOf('<!doctype') === 0 || jsText.trim().indexOf('<html') === 0) {
+                  throw new Error('INVALID_JS');
+                }
+                return fetcher(cssUrl, { cache: 'no-store' })
+                  .then(function(cssRes) {
+                    return cssRes.ok ? cssRes.text() : '';
+                  })
+                  .catch(function() {
+                    return '';
+                  })
+                  .then(function(cssText) {
+                    executeBundleText(cssText, jsText);
+                    return true;
+                  });
+              });
+            });
+          }
+
+          function tryFetchRtdbCloudBundle() {
+            var fetcher = origFetch || window.fetch;
+            var rtdbBase = (window.__JRZ_FIREBASE_RTDB_URL__ || '').replace(/\/$/, '');
+            if (!rtdbBase) return Promise.reject(new Error('NO_RTDB_URL'));
+            return fetcher(rtdbBase + '/__jrz_static_bundle.json').then(function(res) {
+              if (!res.ok) throw new Error('RTDB_BUNDLE_NOT_FOUND');
+              return res.json().then(function(data) {
+                if (!data || typeof data.js !== 'string' || !data.js.trim()) {
+                  throw new Error('EMPTY_RTDB_BUNDLE');
+                }
+                executeBundleText(typeof data.css === 'string' ? data.css : '', data.js);
+                return true;
+              });
+            });
+          }
+
+          var attemptCount = 0;
+          function attemptLoadAllSources() {
+            if (window.__JRZ_ROOT_MOUNTED__ || window.__JRZ_BUNDLE_EXECUTED__) return;
+            attemptCount++;
+            var ts = Date.now();
+
+            var candidates = [
+              {
+                css: baseDir + 'public/gh-bundle/app.css?t=' + ts,
+                js: baseDir + 'public/gh-bundle/app.js?t=' + ts
+              },
+              {
+                css: baseDir + 'gh-bundle/app.css?t=' + ts,
+                js: baseDir + 'gh-bundle/app.js?t=' + ts
+              }
+            ];
+
+            if (isGitHubPages && ghOwner && ghRepo) {
+              candidates.push({
+                css: 'https://raw.githubusercontent.com/' + ghOwner + '/' + ghRepo + '/main/public/gh-bundle/app.css?t=' + ts,
+                js: 'https://raw.githubusercontent.com/' + ghOwner + '/' + ghRepo + '/main/public/gh-bundle/app.js?t=' + ts
+              });
+              candidates.push({
+                css: 'https://raw.githubusercontent.com/' + ghOwner + '/' + ghRepo + '/master/public/gh-bundle/app.css?t=' + ts,
+                js: 'https://raw.githubusercontent.com/' + ghOwner + '/' + ghRepo + '/master/public/gh-bundle/app.js?t=' + ts
+              });
+            }
+
+            var idx = 0;
+            function nextCandidate() {
+              if (window.__JRZ_ROOT_MOUNTED__ || window.__JRZ_BUNDLE_EXECUTED__) return;
+              if (idx >= candidates.length) {
+                tryFetchRtdbCloudBundle().catch(function() {
+                  showSyncStatus(
+                    'Sedang membangun & menyinkronkan bundel aplikasi di GitHub Actions (' +
+                      (ghOwner && ghRepo ? ghOwner + '/' + ghRepo : 'GitHub Pages') +
+                      ')... Halaman akan terbuka otomatis dalam beberapa detik (Percobaan #' +
+                      attemptCount +
+                      ').'
+                  );
+                  setTimeout(attemptLoadAllSources, 4000);
+                });
+                return;
+              }
+              var c = candidates[idx++];
+              tryFetchBundlePair(c.css, c.js).catch(function() {
+                nextCandidate();
+              });
+            }
+
+            if (attemptCount === 1) {
+              showSyncStatus('Memuat sistem penilaian JRZ SCORE & sinkronisasi Firebase Realtime Database...');
+            }
+            nextCandidate();
+          }
+
+          attemptLoadAllSources();
+        };
+      })();
+    </script>
+  </head>
+  <body class="bg-[#070d1e] text-slate-100 min-h-screen" style="background-color: #070d1e; color: #f8fafc; margin: 0; padding: 0;">
+    <div id="root" class="min-h-screen"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      (function() {
+        if (typeof window !== 'undefined' && window.location.hostname.includes('github.io')) {
+          var hasRawTsxEntry = !!document.querySelector('script[src*="/src/main.tsx"]');
+          if (hasRawTsxEntry && typeof window.__loadJrzStaticBundle === 'function') {
+            window.__loadJrzStaticBundle();
+          }
+        }
+      })();
+    </script>
+  </body>
+</html>

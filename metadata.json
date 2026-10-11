@@ -1,0 +1,8 @@
+{
+  "name": "JRZ Score MIX firebase/offline",
+  "description": "Digital Scoring IPSI Untuk Penjurian  Pertandingan Pencak Silat Kategori Tanding",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "name": "JRZ SCORE - Digital Scoring Tanding",
+  "short_name": "JRZ SCORE",
+  "description": "Aplikasi Khusus Digital Scoring Pencak Silat Kategori Tanding Resmi Peraturan IPSI 2026 & PERSILAT",
+  "start_url": "/",
+  "id": "/",
+  "display": "standalone",
+  "background_color": "#070d1e",
+  "theme_color": "#070d1e",
+  "orientation": "any",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/jrzscoreutama.png",
+      "sizes": "2048x2048",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/jrzscoreutama.ico",
+      "sizes": "48x48 32x32 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Monitor Scoreboard",
+      "short_name": "Scoreboard",
+      "description": "Layar monitor display skor LED",
+      "url": "/?mode=SCOREBOARD",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Ketua Dewan",
+      "short_name": "Dewan",
+      "description": "Panel kontrol Dewan Pertandingan",
+      "url": "/?mode=DEWAN",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Sekretaris",
+      "short_name": "Sekretaris",
+      "description": "Bagan tanding dan administrasi partai",
+      "url": "/?mode=SEKRETARIS",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Juri 1",
+      "short_name": "Juri 1",
+      "description": "Touchpad penekanan nilai Juri 1",
+      "url": "/?mode=JURY1",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

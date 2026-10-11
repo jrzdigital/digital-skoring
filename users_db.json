@@ -1,0 +1,127 @@
+{
+  "users": [
+    {
+      "id": "usr_superadmin",
+      "username": "jakaoktorian",
+      "password": "Abuyaku21*",
+      "fullName": "Jaka Oktorian (Super Admin)",
+      "role": "superadmin",
+      "status": "APPROVED",
+      "organization": "Pengurus Besar IPSI",
+      "emailOrPhone": "jakaoktorian2@gmail.com",
+      "createdAt": 1700000000000,
+      "approvedAt": 1700000000000,
+      "approvedBy": "System Root",
+      "ipLockEnabled": false,
+      "lastLoginAt": 1787821807413,
+      "lastLoginIp": "192.168.1.120"
+    },
+    {
+      "id": "usr_admin",
+      "username": "admin",
+      "password": "admin123",
+      "fullName": "Operator Utama Gelanggang",
+      "role": "admin",
+      "status": "APPROVED",
+      "organization": "Panitia Pelaksana Gelanggang A",
+      "emailOrPhone": "admin@ipsi.id",
+      "createdAt": 1700000000000,
+      "approvedAt": 1700000000000,
+      "approvedBy": "Super Administrator",
+      "lastLoginAt": 1787821803555,
+      "ipLockEnabled": false,
+      "lastLoginIp": "192.168.1.105"
+    }
+  ],
+  "activityLogs": [
+    {
+      "id": "log_1787821807414_zidr",
+      "timestamp": 1787821807414,
+      "action": "LOGIN",
+      "username": "jakaoktorian",
+      "details": "Berhasil login sebagai SUPERADMIN (IP: 192.168.1.120)",
+      "ip": "192.168.1.120"
+    },
+    {
+      "id": "log_1787821803555_d0ew",
+      "timestamp": 1787821803555,
+      "action": "LOGIN",
+      "username": "admin",
+      "details": "Berhasil login sebagai ADMIN (IP: 192.168.1.105)",
+      "ip": "192.168.1.105"
+    },
+    {
+      "id": "log_1787821798216_t9ng",
+      "timestamp": 1787821798216,
+      "action": "LOGIN",
+      "username": "admin",
+      "details": "Berhasil login sebagai ADMIN (IP: 127.0.0.1)",
+      "ip": "127.0.0.1"
+    },
+    {
+      "id": "log_1787821794820_p6ks",
+      "timestamp": 1787821794820,
+      "action": "LOGIN",
+      "username": "admin",
+      "details": "Berhasil login sebagai ADMIN (IP: 127.0.0.1)",
+      "ip": "127.0.0.1"
+    },
+    {
+      "id": "log_1787803170386_3v4b",
+      "timestamp": 1787803170386,
+      "action": "IP_UNLOCK_APPROVE",
+      "username": "superadmin",
+      "details": "Menyetujui izin IP akun admin dan mengunci ke IP baru [116.68.172.46]",
+      "ip": "116.68.172.46"
+    },
+    {
+      "id": "log_1787803141599_yo3h",
+      "timestamp": 1787803141599,
+      "action": "LOGIN",
+      "username": "superadmin",
+      "details": "Berhasil login sebagai SUPERADMIN (IP: 116.68.172.46)",
+      "ip": "116.68.172.46"
+    },
+    {
+      "id": "log_1787803131381_dqzm",
+      "timestamp": 1787803131381,
+      "action": "IP_UNLOCK_REQUEST",
+      "username": "admin",
+      "details": "Mengajukan izin IP baru: Terkunci di [127.0.0.1] -> Minta buka akses IP [116.68.172.46] (Pindah perangkat / IP server gelanggang baru)",
+      "ip": "116.68.172.46"
+    },
+    {
+      "id": "log_1787802048251_i3us",
+      "timestamp": 1787802048251,
+      "action": "LOGIN",
+      "username": "admin",
+      "details": "Berhasil login sebagai ADMIN",
+      "ip": "116.68.172.46"
+    },
+    {
+      "id": "log_init",
+      "timestamp": 1787794381184,
+      "action": "CREATE",
+      "username": "superadmin",
+      "details": "Inisialisasi sistem otentikasi IPSI Scoreboard",
+      "ip": "127.0.0.1"
+    }
+  ],
+  "passwordResetRequests": [],
+  "ipUnlockRequests": [
+    {
+      "id": "req_ip_1787803131380_msuf8",
+      "userId": "usr_admin",
+      "username": "admin",
+      "fullName": "Operator Utama Gelanggang",
+      "currentBoundIp": "127.0.0.1",
+      "requestedIp": "116.68.172.46",
+      "reason": "Pindah perangkat / IP server gelanggang baru",
+      "emailOrPhone": "081379876424",
+      "status": "APPROVED",
+      "createdAt": 1787803131380,
+      "approvedAt": 1787803170386,
+      "approvedBy": "superadmin"
+    }
+  ]
+}

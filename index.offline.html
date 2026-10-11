@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/x-icon" href="/jrzscoreutama.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#070d1e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>JRZ SCORE - Digital Scoring Tanding (IPSI 2026 & PERSILAT)</title>
+    <meta name="description" content="Aplikasi Khusus Digital Scoring Pencak Silat Kategori Tanding Resmi Peraturan IPSI 2026 & PERSILAT (Scoreboard LED Arena, Ketua Dewan, Juri 1-3, dan Sekretaris Pertandingan)" />
+    <meta property="og:title" content="JRZ SCORE - Digital Scoring Tanding (IPSI 2026 & PERSILAT)" />
+    <meta property="og:description" content="Aplikasi Khusus Digital Scoring Pencak Silat Kategori Tanding Resmi Peraturan IPSI 2026 & PERSILAT (Scoreboard LED Arena, Ketua Dewan, Juri 1-3, dan Sekretaris Pertandingan)" />
+    <script>
+      (function() {
+        if (typeof window !== 'undefined') {
+          window.__JRZ_INDEX_MODE__ = 'OFFLINE_LOCALHOST';
+          // Immediately clear any stale service workers and caches in preview/dev before modules load
+          if ('serviceWorker' in navigator && (window.location.hostname.includes('run.app') || window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              var hadController = !!navigator.serviceWorker.controller;
+              var unregPromises = regs.map(function(reg) { return reg.unregister(); });
+              Promise.all(unregPromises).then(function() {
+                if ('caches' in window) {
+                  caches.keys().then(function(names) {
+                    return Promise.all(names.map(function(name) { return caches.delete(name); }));
+                  }).then(function() {
+                    if (hadController && !sessionStorage.getItem('jrz_sw_cleared_v3')) {
+                      sessionStorage.setItem('jrz_sw_cleared_v3', '1');
+                      window.location.reload();
+                    }
+                  });
+                } else if (hadController && !sessionStorage.getItem('jrz_sw_cleared_v3')) {
+                  sessionStorage.setItem('jrz_sw_cleared_v3', '1');
+                  window.location.reload();
+                }
+              });
+            }).catch(function() {});
+          }
+
+          const origError = console.error;
+          console.error = function() {
+            if (arguments.length > 0 && typeof arguments[0] === 'string' && (arguments[0].includes('[vite]') || arguments[0].includes('WebSocket') || arguments[0].includes('ws://') || arguments[0].includes('wss://'))) {
+              return;
+            }
+            return origError.apply(console, arguments);
+          };
+          const origWarn = console.warn;
+          console.warn = function() {
+            if (arguments.length > 0 && typeof arguments[0] === 'string' && (arguments[0].includes('[vite]') || arguments[0].includes('WebSocket'))) {
+              return;
+            }
+            return origWarn.apply(console, arguments);
+          };
+          window.addEventListener('error', function(e) {
+            const msg = (e && (e.message || '')) + '';
+            if (msg.includes('[vite]') || msg.includes('WebSocket') || msg.includes('reading \'send\'')) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+            }
+          }, true);
+          window.addEventListener('unhandledrejection', function(e) {
+            const reason = (e && e.reason) ? (e.reason.message || e.reason + '') : '';
+            if (reason.includes('[vite]') || reason.includes('WebSocket') || reason.includes('reading \'send\'')) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+            }
+          }, true);
+          window.addEventListener('vite:preloadError', function() {
+            window.location.reload();
+          });
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-[#070d1e] text-slate-100 min-h-screen" style="background-color: #070d1e; color: #f8fafc; margin: 0; padding: 0;">
+    <div id="root" class="min-h-screen"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

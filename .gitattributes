@@ -1,0 +1,13 @@
+# Treat binary files explicitly to prevent line ending corruption on Windows and during zip exports
+*.jar binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.mp3 binary
+*.wav binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
