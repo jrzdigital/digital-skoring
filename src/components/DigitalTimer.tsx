@@ -11,16 +11,19 @@ import {
   VolumeX 
 } from "lucide-react";
 import { MatchState, MatchStatus } from "../types";
+import { GongIcon } from "./icons/GongIcon";
+import { sound } from "../utils/sound";
 
 interface DigitalTimerProps {
   state: MatchState;
   onTimerCommand?: (command: "START" | "PAUSE" | "ADD_10" | "SUB_10") => void;
+  onUpdateMetadata?: (data: Partial<MatchState>) => void;
   onResetMatch?: () => void;
   readOnly?: boolean;
   size?: "normal" | "large";
 }
 
-export function DigitalTimer({ state, onTimerCommand, onResetMatch, readOnly = false, size = "normal" }: DigitalTimerProps) {
+export function DigitalTimer({ state, onTimerCommand, onUpdateMetadata, onResetMatch, readOnly = false, size = "normal" }: DigitalTimerProps) {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [pulse, setPulse] = useState(false);
 
@@ -240,6 +243,69 @@ export function DigitalTimer({ state, onTimerCommand, onResetMatch, readOnly = f
               <span>RESET</span>
             </button>
 
+          </div>
+
+          {/* Row of Round dropdown, Timer dropdown, and Gong button */}
+          <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-800/80">
+            {/* Dropdown Babak (2 & 3 Babak) */}
+            <div className="flex items-center gap-1 bg-slate-900 border border-cyan-500/40 rounded-lg px-2 py-1 text-[10px]">
+              <span className="font-mono font-bold text-cyan-300">BABAK:</span>
+              <select
+                aria-label="Pilih Jumlah Babak"
+                value={state.roundCount || 3}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  if (onUpdateMetadata) {
+                    onUpdateMetadata({
+                      roundCount: val,
+                      activeRound: Math.min(state.activeRound || 1, val)
+                    });
+                  }
+                }}
+                className="bg-transparent font-mono font-bold text-amber-300 focus:outline-none cursor-pointer"
+              >
+                <option value={2} className="bg-slate-900 text-amber-300 font-bold">2 BABAK</option>
+                <option value={3} className="bg-slate-900 text-amber-300 font-bold">3 BABAK</option>
+              </select>
+            </div>
+
+            {/* Dropdown Durasi Timer (1 s/d 3 Menit) */}
+            <div className="flex items-center gap-1 bg-slate-900 border border-cyan-500/40 rounded-lg px-2 py-1 text-[10px]">
+              <Clock className="w-3 h-3 text-cyan-400" />
+              <select
+                aria-label="Pilih Durasi Timer"
+                value={state.roundDuration || 120}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  if (onUpdateMetadata) {
+                    onUpdateMetadata({
+                      roundDuration: val,
+                      timeLeft: state.status === MatchStatus.IDLE ? val : state.timeLeft
+                    });
+                  }
+                }}
+                className="bg-transparent font-mono font-bold text-emerald-300 focus:outline-none cursor-pointer"
+              >
+                <option value={60} className="bg-slate-900 text-emerald-300 font-bold">1M (01:00)</option>
+                <option value={75} className="bg-slate-900 text-emerald-300 font-bold">1M 15D</option>
+                <option value={90} className="bg-slate-900 text-emerald-300 font-bold">1.5M (01:30)</option>
+                <option value={105} className="bg-slate-900 text-emerald-300 font-bold">1M 45D</option>
+                <option value={120} className="bg-slate-900 text-emerald-300 font-bold">2M (02:00)</option>
+                <option value={150} className="bg-slate-900 text-emerald-300 font-bold">2.5M (02:30)</option>
+                <option value={180} className="bg-slate-900 text-emerald-300 font-bold">3M (03:00)</option>
+              </select>
+            </div>
+
+            {/* Menu Sound Gong (Hanya Icon Gong) */}
+            <button
+              type="button"
+              onClick={() => sound.playGong()}
+              className="p-1 px-2 rounded-lg bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold border border-yellow-300 transition-all cursor-pointer flex items-center justify-center shrink-0"
+              title="Bunyikan Sound Gong"
+              aria-label="Sound Gong"
+            >
+              <GongIcon className="w-3.5 h-3.5 text-slate-950" />
+            </button>
           </div>
 
         </div>

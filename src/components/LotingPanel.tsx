@@ -24,7 +24,8 @@ import {
   X,
   Sliders,
   Trophy,
-  Calendar
+  Calendar,
+  AlertTriangle
 } from "lucide-react";
 import { sound } from "../utils/sound";
 import * as XLSX from "xlsx";
@@ -103,13 +104,28 @@ interface LotingPanelProps {
   onBack: () => void;
   onOpenBracket?: () => void;
   onOpenJadwal?: () => void;
+  onOpenLoting?: () => void;
   hideBackHeader?: boolean;
+  initialSubView?: "PENDATAAN" | "LOTING";
 }
 
-export function LotingPanel({ onBack, onOpenBracket, onOpenJadwal, hideBackHeader = false }: LotingPanelProps) {
+export function LotingPanel({ 
+  onBack, 
+  onOpenBracket, 
+  onOpenJadwal, 
+  onOpenLoting,
+  hideBackHeader = false,
+  initialSubView = "PENDATAAN"
+}: LotingPanelProps) {
   // Sub-menu inside Input Data Panel Sekretaris:
   // "PENDATAAN" (Input & Tabel Atlet) vs "LOTING" (Menu Loting & Edit Manual Data Partai)
-  const [activeSubView, setActiveSubView] = useState<"PENDATAAN" | "LOTING">("PENDATAAN");
+  const [activeSubView, setActiveSubView] = useState<"PENDATAAN" | "LOTING">(initialSubView);
+
+  useEffect(() => {
+    if (initialSubView) {
+      setActiveSubView(initialSubView);
+    }
+  }, [initialSubView]);
 
   // Athlete participants state
   const [participants, setParticipants] = useState<any[]>(() => {
@@ -1012,6 +1028,7 @@ export function LotingPanel({ onBack, onOpenBracket, onOpenJadwal, hideBackHeade
               onClick={() => {
                 sound.playClick();
                 setActiveSubView("LOTING");
+                onOpenLoting?.();
               }}
               className={`px-3 py-1.5 text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${
                 activeSubView === "LOTING"
@@ -1460,6 +1477,17 @@ export function LotingPanel({ onBack, onOpenBracket, onOpenJadwal, hideBackHeade
                 <p className="text-xs text-slate-300 mt-1">
                   Lakukan pengacakan undian (loting) atlet secara otomatis atau per kelas. Setelah atlet terloting, Anda tetap dapat mengubah secara manual seluruh data partai (Nomor Partai, Sudut Biru, Sudut Merah, Kontingen, Babak, dan Gelanggang).
                 </p>
+                {schedules.length > 0 ? (
+                  <div className="mt-2 inline-flex items-center gap-2 px-2.5 py-1 bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 text-[11px] font-bold">
+                    <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>STATUS: {schedules.length} PARTAI TELAH TERLOTING — Seluruh partai dapat diedit secara manual di bawah</span>
+                  </div>
+                ) : (
+                  <div className="mt-2 inline-flex items-center gap-2 px-2.5 py-1 bg-amber-950/80 border border-amber-500/50 text-amber-300 text-[11px] font-bold">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>STATUS: Belum ada partai. Silakan klik "LOTING / KOCOK UNDIAN" atau "TAMBAH PARTAI MANUAL"</span>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -1659,25 +1687,40 @@ export function LotingPanel({ onBack, onOpenBracket, onOpenJadwal, hideBackHeade
                               {m.gender || "PUTRA"}
                             </span>
                           </div>
-                          <div className="text-[10.5px] text-slate-400 font-mono mt-0.5 flex items-center gap-1.5">
+                          <div className="text-[10.5px] text-slate-400 font-mono mt-0.5 flex flex-wrap items-center gap-1.5">
                             <span>{m.ageCategory || m.division || "Remaja"}</span>
                             <span aria-hidden="true">·</span>
-                            <span className="text-amber-300/90">{m.stage || "Penyisihan"}</span>
+                            <select
+                              value={m.stage || "Penyisihan"}
+                              onChange={(e) => handleQuickUpdateMatchField(m.id, "stage", e.target.value)}
+                              className="bg-slate-900 border border-slate-700 text-amber-300 font-bold text-[10px] px-1 py-0.5 cursor-pointer focus:outline-none focus:border-amber-400 rounded-none"
+                              title="Ubah babak / tahap partai secara manual"
+                            >
+                              <option value="Penyisihan">Penyisihan</option>
+                              <option value="Perempat Final">Perempat Final</option>
+                              <option value="Semi Final">Semi Final</option>
+                              <option value="Final">Final</option>
+                              <option value="Perebutan Juara 3">Perebutan Juara 3</option>
+                            </select>
                             {m.isManualModified && (
-                              <>
-                                <span aria-hidden="true">·</span>
-                                <span className="text-emerald-400">Diedit Manual</span>
-                              </>
+                              <span className="text-emerald-400 text-[9.5px] px-1 bg-emerald-950/60 border border-emerald-500/30">
+                                Diedit Manual
+                              </span>
                             )}
                           </div>
                         </td>
 
                         {/* Sudut Biru */}
                         <td className="py-2.5 px-3 bg-blue-950/15 border-l border-slate-800">
-                          <div className="font-black text-blue-300 uppercase">
-                            {m.fighterBlueName || "BYE"}
+                          <div 
+                            onClick={() => handleOpenEditMatchModal(m)}
+                            className="font-black text-blue-300 hover:text-blue-100 uppercase cursor-pointer flex items-center justify-between gap-1 group/blue"
+                            title="Klik untuk mengubah data pesilat sudut biru secara manual"
+                          >
+                            <span className="truncate">{m.fighterBlueName || "BYE"}</span>
+                            <Edit className="w-3 h-3 text-blue-400 opacity-60 group-hover/blue:opacity-100 shrink-0" />
                           </div>
-                          <div className="text-[10.5px] text-slate-400 uppercase">
+                          <div className="text-[10.5px] text-slate-400 uppercase truncate">
                             {m.fighterBlueClub || "-"}
                           </div>
                         </td>
@@ -1696,10 +1739,15 @@ export function LotingPanel({ onBack, onOpenBracket, onOpenJadwal, hideBackHeade
 
                         {/* Sudut Merah */}
                         <td className="py-2.5 px-3 bg-rose-950/15 border-r border-slate-800">
-                          <div className="font-black text-rose-300 uppercase">
-                            {m.fighterRedName || "BYE"}
+                          <div 
+                            onClick={() => handleOpenEditMatchModal(m)}
+                            className="font-black text-rose-300 hover:text-rose-100 uppercase cursor-pointer flex items-center justify-between gap-1 group/red"
+                            title="Klik untuk mengubah data pesilat sudut merah secara manual"
+                          >
+                            <span className="truncate">{m.fighterRedName || "BYE"}</span>
+                            <Edit className="w-3 h-3 text-rose-400 opacity-60 group-hover/red:opacity-100 shrink-0" />
                           </div>
-                          <div className="text-[10.5px] text-slate-400 uppercase">
+                          <div className="text-[10.5px] text-slate-400 uppercase truncate">
                             {m.fighterRedClub || "-"}
                           </div>
                         </td>

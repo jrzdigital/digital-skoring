@@ -371,3 +371,12 @@ export interface Athlete {
   gender?: "PUTRA" | "PUTRI" | "Putera" | "Puteri" | string;
   [key: string]: any;
 }
+
+export type ActionLog = any;
+export type Student = any;
+export type TrainingLog = any;
+export type SchoolProfile = any;
+export type ScheduleReminder = any;
+export type NotificationItem = any;
+export type E2EESettings = any;
+export type QRScanRecord = any;

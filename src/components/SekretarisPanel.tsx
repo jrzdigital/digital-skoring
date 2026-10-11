@@ -340,7 +340,7 @@ interface SekretarisPanelProps {
   isFullscreen: boolean;
   onSubScreenChange?: (isSubScreen: boolean) => void;
   onOpenOperatorPanel?: () => void;
-  initialTab?: "INPUT" | "BAGAN" | "KONTROL" | "PARAMETER" | "REGISTRASI";
+  initialTab?: "INPUT" | "LOTING" | "BAGAN" | "KONTROL" | "PARAMETER" | "REGISTRASI";
 }
 
 export function SekretarisPanel({
@@ -481,22 +481,23 @@ export function SekretarisPanel({
 
   // Unified Sekretaris Navigation:
   // Primary (Level 1): PARAMETER (Parameter Pertandingan) & REGISTRASI (registrasi data)
-  // Sub-menu in REGISTRASI (Level 2): INPUT (Input data), BAGAN (bagan braket), KONTROL (kontrol partai)
+  // Sub-menu in REGISTRASI (Level 2): INPUT (Input data), LOTING (menu loting), BAGAN (bagan braket), KONTROL (kontrol partai)
   const [activeTab, setActiveTab] = useState<"PARAMETER" | "REGISTRASI">(() => {
-    if (initialTab === "INPUT" || initialTab === "BAGAN" || initialTab === "KONTROL" || initialTab === "REGISTRASI") {
+    if (initialTab === "INPUT" || initialTab === "LOTING" || initialTab === "BAGAN" || initialTab === "KONTROL" || initialTab === "REGISTRASI") {
       return "REGISTRASI";
     }
     return "PARAMETER";
   });
 
-  const [registrasiActiveTab, setRegistrasiActiveTab] = useState<"INPUT" | "BAGAN" | "KONTROL">(() => {
+  const [registrasiActiveTab, setRegistrasiActiveTab] = useState<"INPUT" | "LOTING" | "BAGAN" | "KONTROL">(() => {
+    if (initialTab === "LOTING") return "LOTING";
     if (initialTab === "BAGAN") return "BAGAN";
     if (initialTab === "KONTROL") return "KONTROL";
     return "INPUT";
   });
 
   useEffect(() => {
-    if (initialTab === "INPUT" || initialTab === "BAGAN" || initialTab === "KONTROL") {
+    if (initialTab === "INPUT" || initialTab === "LOTING" || initialTab === "BAGAN" || initialTab === "KONTROL") {
       setActiveTab("REGISTRASI");
       setRegistrasiActiveTab(initialTab);
     } else if (initialTab === "REGISTRASI") {
@@ -7588,6 +7589,7 @@ export function SekretarisPanel({
               <div className="bg-[#071330] p-1 rounded-xl border border-cyan-500/40 flex items-center gap-1 shadow-inner animate-fadeIn">
                 {[
                   { id: "INPUT", label: "Input data" },
+                  { id: "LOTING", label: "menu loting" },
                   { id: "BAGAN", label: "bagan braket" },
                   { id: "KONTROL", label: "kontrol partai" }
                 ].map((subItem) => {
@@ -7626,7 +7628,7 @@ export function SekretarisPanel({
         </header>
       )}
 
-      {/* 1. VIEW REGISTRASI DATA (BERISI 3 SUB-MENU: Input data, bagan braket, kontrol partai) */}
+      {/* 1. VIEW REGISTRASI DATA (BERISI 4 SUB-MENU: Input data, menu loting, bagan braket, kontrol partai) */}
       {activeTab === "REGISTRASI" && (
         <div className="w-full flex-grow flex flex-col animate-fadeIn">
           {/* Sub-Navigation Bar Terpadu */}
@@ -7641,6 +7643,7 @@ export function SekretarisPanel({
             <div className="bg-[#040a1c] p-1 rounded-xl border border-cyan-500/40 flex items-center gap-1 shadow-inner">
               {[
                 { id: "INPUT", label: "Input data", icon: Users },
+                { id: "LOTING", label: "menu loting", icon: Shuffle },
                 { id: "BAGAN", label: "bagan braket", icon: Trophy },
                 { id: "KONTROL", label: "kontrol partai", icon: Calendar }
               ].map((subItem) => {
@@ -7680,11 +7683,13 @@ export function SekretarisPanel({
             </button>
           </div>
 
-          {/* Sub-menu 1: Input Data */}
+          {/* Sub-menu 1: Input Data (Formulir Pendaftaran & Tabel Atlet) */}
           {registrasiActiveTab === "INPUT" && (
             <div className="w-full flex-grow animate-fadeIn">
               <LotingPanel 
                 onBack={onBack} 
+                initialSubView="PENDATAAN"
+                onOpenLoting={() => setRegistrasiActiveTab("LOTING")}
                 onOpenBracket={() => setRegistrasiActiveTab("BAGAN")}
                 onOpenJadwal={() => setRegistrasiActiveTab("KONTROL")}
                 hideBackHeader={true} 
@@ -7692,7 +7697,20 @@ export function SekretarisPanel({
             </div>
           )}
 
-          {/* Sub-menu 2: Bagan Braket */}
+          {/* Sub-menu 2: Menu Loting (Loting Undian Atlet & Edit Manual Data Partai) */}
+          {registrasiActiveTab === "LOTING" && (
+            <div className="w-full flex-grow animate-fadeIn">
+              <LotingPanel 
+                onBack={onBack} 
+                initialSubView="LOTING"
+                onOpenBracket={() => setRegistrasiActiveTab("BAGAN")}
+                onOpenJadwal={() => setRegistrasiActiveTab("KONTROL")}
+                hideBackHeader={true} 
+              />
+            </div>
+          )}
+
+          {/* Sub-menu 3: Bagan Braket */}
           {registrasiActiveTab === "BAGAN" && (
             <div className="w-full flex-grow animate-fadeIn">
               <BracketPanel 
@@ -7703,7 +7721,7 @@ export function SekretarisPanel({
             </div>
           )}
 
-          {/* Sub-menu 3: Kontrol Partai */}
+          {/* Sub-menu 4: Kontrol Partai */}
           {registrasiActiveTab === "KONTROL" && (
             <div className="w-full flex-grow animate-fadeIn">
               <JadwalPanel 
@@ -7759,11 +7777,30 @@ export function SekretarisPanel({
                   onClick={() => {
                     sound.playClick();
                     setActiveTab("REGISTRASI");
+                    setRegistrasiActiveTab("INPUT");
                   }}
                   className="px-3 py-1 rounded-md font-sans font-black text-[10.5px] sm:text-[11px] uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-slate-300 hover:text-white hover:bg-slate-850 border border-transparent"
                 >
                   <Layers className="w-3 h-3 text-cyan-300" />
                   <span>REGISTRASI DATA TURNAMEN & BAGAN</span>
+                </button>
+
+                {/* DIVIDER */}
+                <span className="text-amber-400/40 font-bold select-none px-0.5">|</span>
+
+                {/* TAB 3: MENU LOTING */}
+                <button
+                  type="button"
+                  id="nav-tab-menu-loting"
+                  onClick={() => {
+                    sound.playClick();
+                    setActiveTab("REGISTRASI");
+                    setRegistrasiActiveTab("LOTING");
+                  }}
+                  className="px-3 py-1 rounded-md font-sans font-black text-[10.5px] sm:text-[11px] uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-300 hover:text-amber-200 hover:bg-amber-950/40 border border-transparent"
+                >
+                  <Shuffle className="w-3 h-3 text-amber-400" />
+                  <span>MENU LOTING</span>
                 </button>
               </nav>
 

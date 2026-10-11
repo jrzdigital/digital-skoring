@@ -38,6 +38,7 @@ import {
 import { sound } from "../utils/sound";
 import { JuryConnectModal } from "./JuryConnectModal";
 import { WhistleIcon } from "./icons/WhistleIcon";
+import { GongIcon } from "./icons/GongIcon";
 
 interface OperatorPanelProps {
   state?: MatchState;
@@ -531,6 +532,36 @@ export function OperatorPanel({
       onUpdateMetadata({ timeLeft: totalSecs, roundDuration: totalSecs });
       notifyToast(`Durasi babak diatur ke ${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`);
     }
+  };
+
+  // Handler pemilihan jumlah babak yang akan ditandingkan (2 & 3 babak)
+  const handleSelectRoundCount = async (count: number) => {
+    sound.playClick();
+    const targetRound = Math.min(currentRound, count);
+    await onUpdateMetadata({
+      roundCount: count,
+      activeRound: targetRound
+    });
+    notifyToast(`Jumlah babak pertandingan diatur ke ${count} Babak`);
+  };
+
+  // Handler pemilihan durasi timer (1 menit s/d 3 menit)
+  const handleSelectTimerDuration = async (durationSecs: number) => {
+    sound.playClick();
+    const m = Math.floor(durationSecs / 60);
+    const s = durationSecs % 60;
+    const isIdle = matchState.status === MatchStatus.IDLE;
+    await onUpdateMetadata({
+      roundDuration: durationSecs,
+      timeLeft: isIdle ? durationSecs : matchState.timeLeft
+    });
+    notifyToast(`Durasi waktu timer diatur ke ${m} Menit${s > 0 ? ` ${s} Detik` : ""}`);
+  };
+
+  // Handler bunyikan sound gong manual (hanya icon gong)
+  const handlePlayManualGong = () => {
+    sound.playGong();
+    notifyToast("Sound gong dibunyikan!");
   };
 
   // Handler untuk peluit memanggil wasit (hanya icon di UI)
@@ -1301,31 +1332,34 @@ export function OperatorPanel({
                 )}
               </div>
 
-              {/* QUICK TIME ADJUSTMENTS (+10s, -10s, Reset & Atlet Cedera 10s - DIPERKECIL) */}
-              <div className="grid grid-cols-4 gap-1 shrink-0">
+              {/* QUICK TIME ADJUSTMENTS, JUMLAH BABAK, TIMER & SOUND GONG (SEJAJAR DIBAWAH TIMER - VERSI KOMPAK) */}
+              <div className="flex flex-wrap items-center justify-center gap-1 shrink-0">
                 <button
                   onClick={handleSub10}
                   disabled={timeLeft <= 10}
-                  className="flex items-center justify-center gap-1 py-1 px-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-[8.5px] sm:text-[9.5px] font-bold transition-all active:scale-95 disabled:opacity-40 cursor-pointer"
+                  className="flex items-center justify-center gap-0.5 py-1 px-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-[8px] sm:text-[9px] font-bold transition-all active:scale-95 disabled:opacity-40 cursor-pointer"
+                  title="Kurangi 10 Detik"
                 >
-                  <Minus className="w-2.5 h-2.5 shrink-0" />
-                  <span className="truncate">-10 DETIK</span>
+                  <Minus className="w-2 h-2 shrink-0" />
+                  <span className="truncate">-10S</span>
                 </button>
 
                 <button
                   onClick={handleAdd10}
-                  className="flex items-center justify-center gap-1 py-1 px-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-[8.5px] sm:text-[9.5px] font-bold transition-all active:scale-95 cursor-pointer"
+                  className="flex items-center justify-center gap-0.5 py-1 px-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-[8px] sm:text-[9px] font-bold transition-all active:scale-95 cursor-pointer"
+                  title="Tambah 10 Detik"
                 >
-                  <Plus className="w-2.5 h-2.5 shrink-0" />
-                  <span className="truncate">+10 DETIK</span>
+                  <Plus className="w-2 h-2 shrink-0" />
+                  <span className="truncate">+10S</span>
                 </button>
 
                 <button
                   onClick={handleResetTimer}
-                  className="flex items-center justify-center gap-1 py-1 px-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-[8.5px] sm:text-[9.5px] font-bold transition-all active:scale-95 cursor-pointer"
+                  className="flex items-center justify-center gap-0.5 py-1 px-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-[8px] sm:text-[9px] font-bold transition-all active:scale-95 cursor-pointer"
+                  title="Reset Waktu Babak"
                 >
-                  <RotateCcw className="w-2.5 h-2.5 shrink-0" />
-                  <span className="truncate">RESET WAKTU</span>
+                  <RotateCcw className="w-2 h-2 shrink-0" />
+                  <span className="truncate">RESET</span>
                 </button>
 
                 <button
@@ -1336,18 +1370,63 @@ export function OperatorPanel({
                       setShowInjuryModal(true);
                     }
                   }}
-                  className={`flex items-center justify-center gap-1 py-1 px-1.5 rounded-lg border text-[8.5px] sm:text-[9.5px] font-bold transition-all active:scale-95 cursor-pointer ${
+                  className={`flex items-center justify-center gap-0.5 py-1 px-1.5 rounded-lg border text-[8px] sm:text-[9px] font-bold transition-all active:scale-95 cursor-pointer ${
                     isInjuryRunning
                       ? "bg-rose-950/90 text-rose-300 border-rose-500 animate-pulse"
                       : injuryCountdown !== null && injuryCountdown > 0
                       ? "bg-amber-950 text-amber-300 border-amber-500"
                       : "bg-gradient-to-r from-amber-950/80 to-[#2c1305] border-amber-500/50 text-amber-300"
                   }`}
+                  title="Waktu Hitungan Atlet Cedera 10 Detik"
                 >
-                  <AlertTriangle className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                  <AlertTriangle className="w-2 h-2 text-amber-400 shrink-0" />
                   <span className="truncate">
                     {injuryCountdown !== null ? `CEDERA: ${injuryCountdown}S` : "CEDERA (10S)"}
                   </span>
+                </button>
+
+                {/* DROPDOWN PILIHAN JUMLAH BABAK (2 & 3 BABAK) */}
+                <div className="flex items-center gap-0.5 bg-[#091533] border border-cyan-500/50 rounded-lg px-1.5 py-0.5" title="Pilihan Jumlah Babak Pertandingan">
+                  <span className="text-[7.5px] font-mono font-black text-cyan-300 uppercase">BABAK:</span>
+                  <select
+                    aria-label="Pilih Jumlah Babak"
+                    value={totalRounds}
+                    onChange={(e) => handleSelectRoundCount(Number(e.target.value))}
+                    className="bg-transparent text-[8px] sm:text-[9px] font-mono font-black text-amber-300 focus:outline-none cursor-pointer"
+                  >
+                    <option value={2} className="bg-[#071330] text-amber-300">2 BABAK</option>
+                    <option value={3} className="bg-[#071330] text-amber-300">3 BABAK</option>
+                  </select>
+                </div>
+
+                {/* DROPDOWN PILIHAN DURASI TIMER (1 MENIT S/D 3 MENIT) */}
+                <div className="flex items-center gap-0.5 bg-[#091533] border border-cyan-500/50 rounded-lg px-1.5 py-0.5" title="Pilihan Durasi Waktu Timer Babak">
+                  <Clock className="w-2.5 h-2.5 text-cyan-400 shrink-0" />
+                  <select
+                    aria-label="Pilih Durasi Timer"
+                    value={matchState.roundDuration || 120}
+                    onChange={(e) => handleSelectTimerDuration(Number(e.target.value))}
+                    className="bg-transparent text-[8px] sm:text-[9px] font-mono font-black text-emerald-300 focus:outline-none cursor-pointer"
+                  >
+                    <option value={60} className="bg-[#071330] text-emerald-300">1M (01:00)</option>
+                    <option value={75} className="bg-[#071330] text-emerald-300">1M 15D</option>
+                    <option value={90} className="bg-[#071330] text-emerald-300">1.5M (01:30)</option>
+                    <option value={105} className="bg-[#071330] text-emerald-300">1M 45D</option>
+                    <option value={120} className="bg-[#071330] text-emerald-300">2M (02:00)</option>
+                    <option value={150} className="bg-[#071330] text-emerald-300">2.5M (02:30)</option>
+                    <option value={180} className="bg-[#071330] text-emerald-300">3M (03:00)</option>
+                  </select>
+                </div>
+
+                {/* MENU SOUND GONG (HANYA ICON GONG) */}
+                <button
+                  type="button"
+                  onClick={handlePlayManualGong}
+                  className="p-1 px-2 rounded-lg bg-gradient-to-r from-amber-600 via-yellow-500 to-amber-600 hover:from-amber-500 hover:to-yellow-400 active:scale-95 text-slate-950 font-black shadow-md border border-yellow-300 cursor-pointer transition-all flex items-center justify-center shrink-0"
+                  title="Bunyikan Sound Gong"
+                  aria-label="Sound Gong"
+                >
+                  <GongIcon className="w-3.5 h-3.5 text-slate-950" />
                 </button>
               </div>
 
@@ -1412,8 +1491,8 @@ export function OperatorPanel({
                   </div>
 
                   {/* Segmented Round Choice Buttons */}
-                  <div className="grid grid-cols-3 gap-1">
-                    {[1, 2, 3].map((rNum) => {
+                  <div className={`grid gap-1 ${totalRounds === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
+                    {Array.from({ length: totalRounds }, (_, i) => i + 1).map((rNum) => {
                       const isCurrent = currentRound === rNum;
                       return (
                         <button
@@ -1932,12 +2011,13 @@ export function OperatorPanel({
             )}
           </div>
 
-          {/* QUICK TIME ADJUSTMENTS (+10s, -10s, Reset & Atlet Cedera 10s) */}
-          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+          {/* QUICK TIME ADJUSTMENTS, JUMLAH BABAK, TIMER & SOUND GONG (SEJAJAR DIBAWAH TIMER) */}
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-2.5">
             <button
               onClick={handleSub10}
               disabled={timeLeft <= 10}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-bold transition-all active:scale-95 disabled:opacity-40 cursor-pointer shadow-md"
+              title="Kurangi 10 Detik"
             >
               <Minus className="w-3.5 h-3.5" />
               <span>-10 DETIK</span>
@@ -1946,6 +2026,7 @@ export function OperatorPanel({
             <button
               onClick={handleAdd10}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-md"
+              title="Tambah 10 Detik"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>+10 DETIK</span>
@@ -1954,6 +2035,7 @@ export function OperatorPanel({
             <button
               onClick={handleResetTimer}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-md"
+              title="Reset Waktu Babak"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>RESET WAKTU BABAK</span>
@@ -1981,6 +2063,56 @@ export function OperatorPanel({
               <span>
                 {injuryCountdown !== null ? `CEDERA: ${injuryCountdown}S` : "ATLET CEDERA (10S)"}
               </span>
+            </button>
+
+            {/* DIVIDER */}
+            <span className="hidden xl:inline text-cyan-500/30 font-bold select-none px-0.5">|</span>
+
+            {/* DROPDOWN PILIHAN JUMLAH BABAK (2 & 3 BABAK) */}
+            <div className="flex items-center gap-1 bg-[#091533] border border-cyan-500/50 hover:border-cyan-400 rounded-xl px-2.5 py-1.5 shadow-md transition-all" title="Pilihan Jumlah Babak Pertandingan (2 atau 3 Babak)">
+              <span className="text-[10px] font-mono font-black text-cyan-300 uppercase">BABAK:</span>
+              <select
+                id="select-round-count"
+                aria-label="Pilih Jumlah Babak Pertandingan (2 atau 3 Babak)"
+                value={totalRounds}
+                onChange={(e) => handleSelectRoundCount(Number(e.target.value))}
+                className="bg-transparent text-xs font-mono font-black text-amber-300 focus:outline-none cursor-pointer"
+              >
+                <option value={2} className="bg-[#071330] text-amber-300 font-bold">2 BABAK</option>
+                <option value={3} className="bg-[#071330] text-amber-300 font-bold">3 BABAK</option>
+              </select>
+            </div>
+
+            {/* DROPDOWN PILIHAN TIMER DURASI (1 MENIT S/D 3 MENIT) */}
+            <div className="flex items-center gap-1.5 bg-[#091533] border border-cyan-500/50 hover:border-cyan-400 rounded-xl px-2.5 py-1.5 shadow-md transition-all" title="Pilihan Durasi Waktu Timer (1 Menit sampai 3 Menit)">
+              <Clock className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <select
+                id="select-timer-duration"
+                aria-label="Pilih Durasi Waktu Timer (1 Menit sampai 3 Menit)"
+                value={matchState.roundDuration || 120}
+                onChange={(e) => handleSelectTimerDuration(Number(e.target.value))}
+                className="bg-transparent text-xs font-mono font-black text-emerald-300 focus:outline-none cursor-pointer"
+              >
+                <option value={60} className="bg-[#071330] text-emerald-300 font-bold">1 MENIT (01:00)</option>
+                <option value={75} className="bg-[#071330] text-emerald-300 font-bold">1 MENIT 15 DETIK (01:15)</option>
+                <option value={90} className="bg-[#071330] text-emerald-300 font-bold">1.5 MENIT (01:30)</option>
+                <option value={105} className="bg-[#071330] text-emerald-300 font-bold">1 MENIT 45 DETIK (01:45)</option>
+                <option value={120} className="bg-[#071330] text-emerald-300 font-bold">2 MENIT (02:00)</option>
+                <option value={150} className="bg-[#071330] text-emerald-300 font-bold">2.5 MENIT (02:30)</option>
+                <option value={180} className="bg-[#071330] text-emerald-300 font-bold">3 MENIT (03:00)</option>
+              </select>
+            </div>
+
+            {/* MENU SOUND GONG (HANYA ICON GONG) */}
+            <button
+              type="button"
+              id="btn-sound-gong"
+              onClick={handlePlayManualGong}
+              className="p-1.5 px-3 rounded-xl bg-gradient-to-r from-amber-600 via-yellow-500 to-amber-600 hover:from-amber-500 hover:to-yellow-400 active:scale-95 text-slate-950 font-black shadow-[0_0_15px_rgba(245,158,11,0.5)] border border-yellow-300 cursor-pointer transition-all flex items-center justify-center shrink-0"
+              title="Bunyikan Sound Gong"
+              aria-label="Sound Gong"
+            >
+              <GongIcon className="w-4 h-4 text-slate-950" />
             </button>
           </div>
 
@@ -2039,8 +2171,8 @@ export function OperatorPanel({
               </div>
 
               {/* Segmented Round Choice Buttons */}
-              <div className="grid grid-cols-3 gap-2">
-                {[1, 2, 3].map((rNum) => {
+              <div className={`grid gap-2 ${totalRounds === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
+                {Array.from({ length: totalRounds }, (_, i) => i + 1).map((rNum) => {
                   const isCurrent = currentRound === rNum;
                   return (
                     <button

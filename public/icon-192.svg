@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#18181b"/>
+      <stop offset="100%" stop-color="#000000"/>
+    </linearGradient>
+    <linearGradient id="redGrad192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ef4444"/>
+      <stop offset="100%" stop-color="#991b1b"/>
+    </linearGradient>
+    <linearGradient id="goldGrad192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="192" height="192" rx="42" fill="url(#bgGrad192)"/>
+  <rect width="186" height="186" x="3" y="3" rx="39" fill="none" stroke="#dc2626" stroke-width="2" stroke-opacity="0.5"/>
+
+  <!-- Shield -->
+  <path d="M96 24 L156 48 C156 105 96 146 96 162 C96 146 36 105 36 48 Z" fill="#27272a" stroke="url(#goldGrad192)" stroke-width="3"/>
+
+  <!-- Flame / Silat Symbol -->
+  <path d="M96 42 C108 68 126 83 115 110 C108 128 96 140 96 140 C96 140 84 128 77 110 C66 83 84 68 96 42 Z" fill="url(#redGrad192)"/>
+  <circle cx="96" cy="92" r="11" fill="url(#goldGrad192)" stroke="#ffffff" stroke-width="1.5"/>
+</svg>

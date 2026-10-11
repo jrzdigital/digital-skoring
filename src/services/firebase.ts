@@ -1361,8 +1361,59 @@ function shouldSyncStorageKeyToRtdb(key: string): boolean {
     key.startsWith("jrz_") ||
     key.startsWith("ipsi_") ||
     key.startsWith("sekretaris_") ||
-    key === "registered_athletes"
+    key === "registered_athletes" ||
+    key === "match_schedules"
   );
+}
+
+// Sinkronisasi eksplisit jadwal & peserta turnamen ke Firebase Realtime Database
+export async function syncTournamentToFirebase(
+  schedules: any[],
+  participants?: any[],
+  categories?: any[]
+): Promise<void> {
+  if (typeof window === "undefined" || !db) return;
+  try {
+    const cleanMatches = sanitizeForFirebase(schedules || []);
+    const cleanParticipants = sanitizeForFirebase(participants || []);
+    const cleanCategories = sanitizeForFirebase(categories || []);
+
+    // 1. Simpan ke path arenas/A/schedule dan root schedule
+    const schedRefA = fbRef(db, "arenas/A/schedule");
+    const rootSchedRef = fbRef(db, "schedule");
+    await Promise.allSettled([
+      fbSet(schedRefA, cleanMatches),
+      fbSet(rootSchedRef, cleanMatches)
+    ]);
+
+    // 2. Simpan juga jika ada partai Gelanggang B, C, D
+    const arenasFound = new Set<string>();
+    (schedules || []).forEach((m: any) => {
+      if (m && m.arena && typeof m.arena === "string") {
+        const aCode = m.arena.replace(/[^A-Za-z0-9]/g, "").slice(-1).toUpperCase();
+        if (aCode && aCode !== "A") arenasFound.add(aCode);
+      }
+    });
+    for (const aCode of arenasFound) {
+      const arenaMatches = (schedules || []).filter((m: any) => {
+        const c = String(m?.arena || "").replace(/[^A-Za-z0-9]/g, "").slice(-1).toUpperCase();
+        return c === aCode;
+      });
+      fbSet(fbRef(db, `arenas/${aCode}/schedule`), sanitizeForFirebase(arenaMatches)).catch(() => {});
+    }
+
+    // 3. Simpan ringkasan turnamen untuk akses cepat multi-device
+    fbSet(fbRef(db, "tournamentData"), {
+      updatedAt: Date.now(),
+      matchesCount: (schedules || []).length,
+      participantsCount: (participants || []).length,
+      categoriesCount: (categories || []).length,
+      participants: cleanParticipants,
+      categories: cleanCategories
+    }).catch(() => {});
+  } catch (err) {
+    console.warn("[Firebase] syncTournamentToFirebase error:", err);
+  }
 }
 
 function initRealtimeAppStorageBridge() {
@@ -1412,6 +1463,11 @@ function initRealtimeAppStorageBridge() {
             if (currentVal !== entry.value) {
               origSetItem(entry.key, entry.value);
               try {
+                autoSaveVault.mirrorKeyToIndexedDB(entry.key, JSON.parse(entry.value));
+              } catch {
+                autoSaveVault.mirrorKeyToIndexedDB(entry.key, entry.value);
+              }
+              try {
                 window.dispatchEvent(
                   new StorageEvent("storage", {
                     key: entry.key,
@@ -1419,6 +1475,19 @@ function initRealtimeAppStorageBridge() {
                     oldValue: currentVal
                   })
                 );
+                // Dispatch custom events untuk update reaktif instan di seluruh layar
+                if (entry.key === "jrz_cached_schedules" || entry.key === "match_schedules") {
+                  try {
+                    const parsed = JSON.parse(entry.value);
+                    window.dispatchEvent(new CustomEvent("jrz_schedules_updated", { detail: parsed }));
+                  } catch {}
+                }
+                if (entry.key === "jrz_cached_participants" || entry.key === "registered_athletes") {
+                  try {
+                    const parsed = JSON.parse(entry.value);
+                    window.dispatchEvent(new CustomEvent("jrz_athletes_updated", { detail: { participants: parsed } }));
+                  } catch {}
+                }
               } catch {}
             }
           }

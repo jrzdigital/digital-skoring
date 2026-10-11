@@ -1922,6 +1922,7 @@ export async function saveManualSchedulesOverride(
 
   try {
     localStorage.setItem("jrz_cached_schedules", JSON.stringify(updatedMatches));
+    localStorage.setItem("match_schedules", JSON.stringify(updatedMatches));
     localStorage.setItem("jrz_bracket_cleared", updatedMatches.length === 0 ? "true" : "false");
   } catch (e) {
     console.warn("Gagal menyimpan jadwal manual ke localStorage:", e);
@@ -1937,6 +1938,12 @@ export async function saveManualSchedulesOverride(
         newMatches: updatedMatches
       })
     });
+  } catch {}
+
+  // Sinkronisasi ke Firebase Realtime Database (Online mode / GitHub Pages)
+  try {
+    const { syncTournamentToFirebase } = await import("../services/firebase");
+    syncTournamentToFirebase(updatedMatches, participantsList, categoriesList).catch(() => {});
   } catch {}
 
   try {
@@ -2016,6 +2023,12 @@ export async function syncAndGenerateSchedulesFromParticipants(
     });
   } catch {}
 
+  // Sinkronisasi ke Firebase Realtime Database (Online mode / GitHub Pages)
+  try {
+    const { syncTournamentToFirebase } = await import("../services/firebase");
+    syncTournamentToFirebase(matches, participants, categories).catch(() => {});
+  } catch {}
+
   // Broadcast ke seluruh komponen dan tab
   try {
     window.dispatchEvent(new CustomEvent("jrz_tournament_synced", {
@@ -2069,6 +2082,12 @@ export async function clearAllSchedulesAndBrackets(options?: { clearAthletes?: b
         newMatches: []
       })
     });
+  } catch {}
+
+  // Sinkronisasi pembersihan ke Firebase Realtime Database
+  try {
+    const { syncTournamentToFirebase } = await import("../services/firebase");
+    syncTournamentToFirebase([], clearAthletes ? [] : currentParticipants, clearAthletes ? [] : currentCategories).catch(() => {});
   } catch {}
 
   try {

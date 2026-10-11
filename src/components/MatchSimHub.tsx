@@ -1748,8 +1748,8 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
                       className="w-20 h-20 sm:w-24 sm:h-24 md:w-26 md:h-26 object-contain rounded-none group-hover:scale-110 filter drop-shadow-[0_0_15px_rgba(245,158,11,0.6)] group-hover:drop-shadow-[0_0_25px_rgba(251,191,36,0.95)] transition-all duration-300 z-10" 
                       onError={(e) => {
                         const target = e.currentTarget;
-                        if (!target.src.includes("icon%20laporan.png") && !target.src.includes("iconlaporan.png")) {
-                          target.src = "/icon laporan.png";
+                        if (!target.src.includes("iconlaporan.png")) {
+                          target.src = "/iconlaporan.png";
                         } else {
                           target.style.display = 'none';
                           const fallback = target.parentElement?.querySelector('.icon-fallback') as HTMLElement;
@@ -2343,7 +2343,7 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
 
           {appMode === "LOTING" && (
             <SekretarisPanel
-              initialTab="INPUT"
+              initialTab="LOTING"
               state={matchState}
               onUpdateMetadata={handleUpdateMetadata}
               onResetMatch={handleResetMatch}

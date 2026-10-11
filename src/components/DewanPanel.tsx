@@ -1662,7 +1662,7 @@ export function DewanPanel({
                 alt="Digital Scoring Pencak Silat"
                 className="w-14 h-14 md:w-16 md:h-16 object-contain pointer-events-none filter drop-shadow-[0_0_12px_rgba(6,182,212,0.4)]"
                 onError={(e) => {
-                  e.currentTarget.src = "/logo satriaapp.png";
+                  e.currentTarget.src = "/logo_satriaapp.png";
                 }}
               />
             </div>

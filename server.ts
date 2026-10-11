@@ -7,16 +7,8 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { fileURLToPath } from "url";
 
-const _currentDir =
-  typeof __dirname !== "undefined"
-    ? __dirname
-    : typeof import.meta !== "undefined" && import.meta.url
-    ? path.dirname(fileURLToPath(import.meta.url))
-    : process.cwd();
-
-import { MatchState, MatchStatus, MatchLog, FighterColor, ActionType, ScoreDetail } from "./src/types.ts";
+import { MatchState, MatchStatus, MatchLog, FighterColor, ActionType, ScoreDetail } from "./src/types";
 import {
   loginUser,
   registerUser,
@@ -41,7 +33,7 @@ import {
   resetUserBoundIp,
   updateUserBoundIp,
   toggleUserIpLock
-} from "./userManager.ts";
+} from "./userManager";
 
 function getRequestIp(req: any): string {
   let ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || req.ip || "127.0.0.1";
@@ -58,39 +50,9 @@ function getRequestIp(req: any): string {
 }
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = process.env.ELECTRON_RUN_PORT ? parseInt(process.env.ELECTRON_RUN_PORT) : 3000;
 
-function resolveServerDataFile(fileName: string): string {
-  if (process.env.JRZ_DATA_DIR) {
-    try {
-      if (!fs.existsSync(process.env.JRZ_DATA_DIR)) {
-        fs.mkdirSync(process.env.JRZ_DATA_DIR, { recursive: true });
-      }
-      return path.join(process.env.JRZ_DATA_DIR, fileName);
-    } catch (e) {
-      // fallback below
-    }
-  }
-  const localPath = path.resolve("./", fileName);
-  try {
-    fs.accessSync(path.dirname(localPath), fs.constants.W_OK);
-    return localPath;
-  } catch (e) {
-    const fallbackDir = path.join(os.homedir(), ".jrz-score-ipsi");
-    try {
-      if (!fs.existsSync(fallbackDir)) {
-        fs.mkdirSync(fallbackDir, { recursive: true });
-      }
-      return path.join(fallbackDir, fileName);
-    } catch (err) {
-      return localPath;
-    }
-  }
-}
-
-const ACTIVE_MATCH_FILE = resolveServerDataFile("activeMatch.json");
-
-// Enable CORS for iframe preview and network devices
+// Enable CORS for iframe preview, Electron, and local Wi-Fi devices
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
@@ -173,28 +135,37 @@ function updateJuryConnections() {
   };
 }
 
+const FIREBASE_RTDB_BASE = "https://digital-skoring-pencak-silat-default-rtdb.asia-southeast1.firebasedatabase.app";
+
+// Helper to push state changes to Firebase Cloud RTDB
+function pushToFirebaseCloud(arena = "A") {
+  try {
+    const payload = JSON.parse(JSON.stringify(activeMatch));
+    fetch(`${FIREBASE_RTDB_BASE}/arenas/${arena}/activeMatch.json`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).catch(() => {});
+    if (arena === "A") {
+      fetch(`${FIREBASE_RTDB_BASE}/activeMatch.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }).catch(() => {});
+    }
+  } catch (err) {
+    // ignore
+  }
+}
+
 // Helper to broadcast state changes instantly to all connected panels
 function broadcastState() {
   updateJuryConnections();
-  const now = Date.now();
-  activeMatch.lastUpdatedAt = now;
-  activeMatch.stateVersion = (Number(activeMatch.stateVersion) || 0) + 1;
-  if (activeMatch.status === MatchStatus.RUNNING) {
-    if (!activeMatch.timerEndAt || activeMatch.timerEndAt <= 0) {
-      activeMatch.timerStartedAt = now;
-      activeMatch.timerEndAt = now + (activeMatch.timeLeft || activeMatch.roundDuration || 120) * 1000;
-    } else {
-      activeMatch.timeLeft = Math.max(0, Math.ceil((activeMatch.timerEndAt - now) / 1000));
-    }
-  } else {
-    activeMatch.timerEndAt = null;
-    activeMatch.timerStartedAt = null;
-  }
   const data = JSON.stringify(activeMatch);
   
   // Persist current state to activeMatch.json for recovery on server restarts
   try {
-    fs.writeFileSync(ACTIVE_MATCH_FILE, data, "utf8");
+    fs.writeFileSync("./activeMatch.json", data, "utf8");
   } catch (err) {
     console.error("[AUTOSAVE] Gagal menyimpan status pertandingan ke file:", err);
   }
@@ -206,7 +177,48 @@ function broadcastState() {
       // client dropped
     }
   });
+
+  // Sinkronkan ke Firebase Cloud Realtime Database
+  pushToFirebaseCloud(activeMatch.arena || "A");
 }
+
+// Sinkronisasi berkala dari Firebase Cloud ke server jika ada input dari gawai juri / dewan jarak jauh
+setInterval(async () => {
+  try {
+    const arena = activeMatch.arena || "A";
+    const res = await fetch(`${FIREBASE_RTDB_BASE}/arenas/${arena}/activeMatch.json`);
+    if (res.ok) {
+      const remote = await res.json();
+      if (remote && remote.id && remote.id !== "match-none") {
+        const isDifferent = 
+          remote.scoreRed !== activeMatch.scoreRed || 
+          remote.scoreBlue !== activeMatch.scoreBlue ||
+          remote.juryPanelLocked !== activeMatch.juryPanelLocked ||
+          remote.dewanPanelLocked !== activeMatch.dewanPanelLocked ||
+          remote.status !== activeMatch.status ||
+          remote.showRoundOverPopup !== activeMatch.showRoundOverPopup ||
+          JSON.stringify(remote.activeJuryPresses) !== JSON.stringify(activeMatch.activeJuryPresses);
+        
+        if (isDifferent) {
+          activeMatch = { ...activeMatch, ...remote };
+          if (activeMatch.status === MatchStatus.RUNNING) {
+            checkRunningTimer();
+          }
+          updateJuryConnections();
+          const data = JSON.stringify(activeMatch);
+          try {
+            fs.writeFileSync("./activeMatch.json", data, "utf8");
+          } catch (err) {}
+          sseClients.forEach(c => {
+            try { c.write(`data: ${data}\n\n`); } catch (e) {}
+          });
+        }
+      }
+    }
+  } catch (e) {
+    // ignore network errors
+  }
+}, 1000);
 
 // Middleware to automatically broadcast activeMatch updates via SSE
 app.use((req, res, next) => {
@@ -215,8 +227,6 @@ app.use((req, res, next) => {
     const result = originalJson.call(this, body);
     if (
       req.method === "POST" && 
-      req.path !== "/api/jury/ping" &&
-      req.path !== "/api/device/ping" &&
       (req.path.startsWith("/api/match-state") || 
        req.path.startsWith("/api/jury") || 
        req.path.startsWith("/api/dewan") || 
@@ -374,44 +384,6 @@ function recalculateScores() {
   
   activeMatch.blueStats.warnings = bluePenaltyDeductions;
   activeMatch.scoreBlue = bluePositive - bluePenaltyDeductions;
-
-  // Immediately evaluate WMP point gap tracking on score changes in Babak II or III
-  if (activeMatch.activeRound === 2 || activeMatch.activeRound === 3) {
-    const wmpThreshold = getWmpPointThreshold(activeMatch);
-    const scoreDiff = Math.abs(activeMatch.scoreRed - activeMatch.scoreBlue);
-    if (scoreDiff >= wmpThreshold) {
-      const currentLosingColor = activeMatch.scoreRed > activeMatch.scoreBlue ? "BLUE" : "RED";
-      const currentLosingScore = currentLosingColor === "BLUE" ? activeMatch.scoreBlue : activeMatch.scoreRed;
-      if (activeMatch.losingCornerColor !== currentLosingColor) {
-        activeMatch.losingCornerColor = currentLosingColor;
-        activeMatch.lastLosingScore = currentLosingScore;
-        activeMatch.losingCornerNoScoreDuration = 0;
-      } else {
-        activeMatch.lastLosingScore = currentLosingScore;
-      }
-    } else {
-      activeMatch.losingCornerColor = null;
-      activeMatch.lastLosingScore = undefined;
-      activeMatch.losingCornerNoScoreDuration = 0;
-    }
-  } else {
-    activeMatch.losingCornerColor = null;
-    activeMatch.lastLosingScore = undefined;
-    activeMatch.losingCornerNoScoreDuration = 0;
-  }
-}
-
-function getWmpPointThreshold(match: MatchState): number {
-  if (Number(match.wmpThreshold) === 20) return 20;
-  if (Number(match.wmpThreshold) === 30) return 30;
-  const combined = `${match.division || ""} ${match.classCategory || ""}`.toUpperCase();
-  const isUsiaDiniOrPraRemaja =
-    combined.includes("USIA DINI") ||
-    combined.includes("USIADINI") ||
-    combined.includes("PRA REMAJA") ||
-    combined.includes("PRA-REMAJA") ||
-    combined.includes("PRAREMAJA");
-  return isUsiaDiniOrPraRemaja ? 20 : 30;
 }
 
 function endCurrentRoundPenalties() {
@@ -538,12 +510,7 @@ export function compileJuryPressStats(logs: MatchLog[]) {
     totalPresses: 0
   };
 
-  const seenTimestampsByJuryKey: Record<string, number[]> = {};
-
   (logs || []).forEach(log => {
-    if (!log || (log.type !== "PUNCH" && log.type !== "KICK")) return;
-    if (log.description && log.description.startsWith("UJI COBA GAWAI")) return;
-
     const juryList: number[] = [];
     if (!log.uncounted && log.juryIds && Array.isArray(log.juryIds)) {
       juryList.push(...log.juryIds);
@@ -552,20 +519,9 @@ export function compileJuryPressStats(logs: MatchLog[]) {
       if (!isNaN(jNum)) juryList.push(jNum);
     }
 
-    const uniqueJuries = Array.from(new Set(juryList));
-    const logTime = Number(log.timestamp) || 0;
-
-    uniqueJuries.forEach(jId => {
+    juryList.forEach(jId => {
       const target = jId === 1 ? stats.juri1 : jId === 2 ? stats.juri2 : jId === 3 ? stats.juri3 : null;
       if (!target) return;
-
-      const dedupKey = `${jId}_${log.round}_${log.fighter}_${log.type}`;
-      const prevTimes = seenTimestampsByJuryKey[dedupKey] || [];
-      if (logTime > 0 && prevTimes.some(t => Math.abs(t - logTime) <= 500)) {
-        return;
-      }
-      prevTimes.push(logTime);
-      seenTimestampsByJuryKey[dedupKey] = prevTimes;
 
       if (log.fighter === "BLUE") {
         if (log.type === "PUNCH") {
@@ -590,88 +546,6 @@ export function compileJuryPressStats(logs: MatchLog[]) {
   });
 
   return stats;
-}
-
-function normalizePartaiNumServer(val: any): string {
-  if (val === undefined || val === null) return "";
-  const str = String(val).trim();
-  const digits = str.replace(/\D/g, "");
-  if (digits.length > 0) return String(parseInt(digits, 10));
-  return str.toUpperCase();
-}
-
-function archiveActiveMatchToSchedule(winnerSideParam?: "MERAH" | "BIRU") {
-  const actualId = activeMatch.id.startsWith("match-") ? activeMatch.id.replace("match-", "") : activeMatch.id;
-  const normCurrent = normalizePartaiNumServer(activeMatch.matchNumber);
-  const currentIdx = matchesSchedule.findIndex(
-    m =>
-      m.id === actualId ||
-      m.id === activeMatch.id ||
-      m.matchNumber === activeMatch.matchNumber ||
-      (normCurrent !== "" && normalizePartaiNumServer(m.matchNumber) === normCurrent)
-  );
-
-  const winnerSide = winnerSideParam || (
-    activeMatch.winnerColor === "RED"
-      ? "MERAH"
-      : activeMatch.winnerColor === "BLUE"
-      ? "BIRU"
-      : activeMatch.scoreRed > activeMatch.scoreBlue
-      ? "MERAH"
-      : activeMatch.scoreBlue > activeMatch.scoreRed
-      ? "BIRU"
-      : undefined
-  );
-
-  const juryStats = compileJuryPressStats(activeMatch.logs);
-  activeMatch.juryPressStats = juryStats;
-
-  if (currentIdx !== -1) {
-    matchesSchedule[currentIdx].status = "SELESAI" as any;
-    if (winnerSide) {
-      matchesSchedule[currentIdx].winner = winnerSide;
-    }
-    matchesSchedule[currentIdx].scoreRed = activeMatch.scoreRed;
-    matchesSchedule[currentIdx].scoreBlue = activeMatch.scoreBlue;
-    matchesSchedule[currentIdx].redStats = activeMatch.redStats ? { ...activeMatch.redStats } : undefined;
-    matchesSchedule[currentIdx].blueStats = activeMatch.blueStats ? { ...activeMatch.blueStats } : undefined;
-    matchesSchedule[currentIdx].fighterRedName = activeMatch.fighterRedName;
-    matchesSchedule[currentIdx].fighterBlueName = activeMatch.fighterBlueName;
-    matchesSchedule[currentIdx].fighterRedClub = activeMatch.fighterRedClub;
-    matchesSchedule[currentIdx].fighterBlueClub = activeMatch.fighterBlueClub;
-    matchesSchedule[currentIdx].classCategory = activeMatch.classCategory;
-    matchesSchedule[currentIdx].juryPressStats = { ...juryStats };
-    matchesSchedule[currentIdx].logs = activeMatch.logs ? JSON.parse(JSON.stringify(activeMatch.logs)) : [];
-
-    if (winnerSide) {
-      const matchObj = matchesSchedule[currentIdx];
-      const winId = winnerSide === "MERAH" ? matchObj.fighterRedId : matchObj.fighterBlueId;
-      const winName = winnerSide === "MERAH" ? (matchObj.fighterRedName || activeMatch.fighterRedName) : (matchObj.fighterBlueName || activeMatch.fighterBlueName);
-      const winClub = winnerSide === "MERAH" ? (matchObj.fighterRedClub || activeMatch.fighterRedClub) : (matchObj.fighterBlueClub || activeMatch.fighterBlueClub);
-      propagateWinnerAcrossSchedules(matchObj.id, actualId, winId, winName, winClub, matchObj.categoryClassId, matchObj.gender);
-    }
-  } else {
-    matchesSchedule.push({
-      id: actualId || "archived-" + Date.now(),
-      matchNumber: activeMatch.matchNumber || "Partai 1",
-      stage: (activeMatch.stage as any) || "PENYISIHAN",
-      gender: (activeMatch.gender as any) || "PUTRA",
-      status: "SELESAI" as any,
-      winner: winnerSide,
-      scoreRed: activeMatch.scoreRed,
-      scoreBlue: activeMatch.scoreBlue,
-      redStats: activeMatch.redStats ? { ...activeMatch.redStats } : undefined,
-      blueStats: activeMatch.blueStats ? { ...activeMatch.blueStats } : undefined,
-      fighterRedName: activeMatch.fighterRedName,
-      fighterBlueName: activeMatch.fighterBlueName,
-      fighterRedClub: activeMatch.fighterRedClub,
-      fighterBlueClub: activeMatch.fighterBlueClub,
-      classCategory: activeMatch.classCategory,
-      division: activeMatch.division || "DEWASA",
-      juryPressStats: { ...juryStats },
-      logs: activeMatch.logs ? JSON.parse(JSON.stringify(activeMatch.logs)) : []
-    });
-  }
 }
 
 function processMatchFinish() {
@@ -714,21 +588,43 @@ function processMatchFinish() {
       type: "SYSTEM"
     });
 
-    // Archive finished match and propagate winner into matchesSchedule
-    archiveActiveMatchToSchedule(winnerResult.winner === "RED" ? "MERAH" : "BIRU");
+    // Save winner and full stats into matchesSchedule
+    const actualId = activeMatch.id.startsWith("match-") ? activeMatch.id.replace("match-", "") : activeMatch.id;
+    const currentIdx = matchesSchedule.findIndex(m => m.id === actualId || m.matchNumber === activeMatch.matchNumber);
+    if (currentIdx !== -1) {
+      matchesSchedule[currentIdx].status = "SELESAI" as any;
+      matchesSchedule[currentIdx].winner = winnerResult.winner === "RED" ? "MERAH" : "BIRU";
+      matchesSchedule[currentIdx].scoreRed = activeMatch.scoreRed;
+      matchesSchedule[currentIdx].scoreBlue = activeMatch.scoreBlue;
+      matchesSchedule[currentIdx].redStats = activeMatch.redStats ? { ...activeMatch.redStats } : undefined;
+      matchesSchedule[currentIdx].blueStats = activeMatch.blueStats ? { ...activeMatch.blueStats } : undefined;
+      matchesSchedule[currentIdx].fighterRedName = activeMatch.fighterRedName;
+      matchesSchedule[currentIdx].fighterBlueName = activeMatch.fighterBlueName;
+      matchesSchedule[currentIdx].fighterRedClub = activeMatch.fighterRedClub;
+      matchesSchedule[currentIdx].fighterBlueClub = activeMatch.fighterBlueClub;
+      matchesSchedule[currentIdx].classCategory = activeMatch.classCategory;
+      matchesSchedule[currentIdx].juryPressStats = { ...activeMatch.juryPressStats };
 
-    // Auto-advance: Otomatis alihkan ke persiapan partai selanjutnya setelah 5 detik masa pengumuman pemenang
+      const winSide = winnerResult.winner === "RED" ? "MERAH" : "BIRU";
+      const matchObj = matchesSchedule[currentIdx];
+      const winId = winSide === "MERAH" ? matchObj.fighterRedId : matchObj.fighterBlueId;
+      const winName = winSide === "MERAH" ? (matchObj.fighterRedName || activeMatch.fighterRedName) : (matchObj.fighterBlueName || activeMatch.fighterBlueName);
+      const winClub = winSide === "MERAH" ? (matchObj.fighterRedClub || activeMatch.fighterRedClub) : (matchObj.fighterBlueClub || activeMatch.fighterBlueClub);
+      propagateWinnerAcrossSchedules(matchObj.id, actualId, winId, winName, winClub, matchObj.categoryClassId, matchObj.gender);
+    }
+
+    // Auto-advance: Otomatis alihkan ke persiapan partai selanjutnya setelah 10 detik masa selebrasi
     if (autoAdvanceTimer) {
       clearTimeout(autoAdvanceTimer);
       autoAdvanceTimer = null;
     }
     autoAdvanceTimer = setTimeout(() => {
       if (activeMatch.status === MatchStatus.FINISHED) {
-        console.log("OTOMATIS BERALIH: Menampilkan persiapan untuk partai selanjutnya...");
+        console.log("OTOMATIS BERALIH: Durasi selebrasi selesai, memuat partai selanjutnya...");
         loadNextMatch();
         broadcastState();
       }
-    }, 5000);
+    }, 10000);
   }
 
   broadcastState();
@@ -789,19 +685,10 @@ function propagateWinnerAcrossSchedules(
 
 function loadNextMatch() {
   const actualId = activeMatch.id.startsWith("match-") ? activeMatch.id.replace("match-", "") : activeMatch.id;
-  const normCurrent = normalizePartaiNumServer(activeMatch.matchNumber);
-  const currentIdx = matchesSchedule.findIndex(
-    m =>
-      m.id === actualId ||
-      m.id === activeMatch.id ||
-      m.matchNumber === activeMatch.matchNumber ||
-      (normCurrent !== "" && normalizePartaiNumServer(m.matchNumber) === normCurrent)
-  );
+  const currentIdx = matchesSchedule.findIndex(m => m.id === actualId || m.matchNumber === activeMatch.matchNumber);
   
-  // Find next match that has not finished yet (status !== "SELESAI")
-  const nextMatch =
-    matchesSchedule.find((m, idx) => idx > currentIdx && m.status !== "SELESAI") ||
-    matchesSchedule.find(m => m.status !== "SELESAI" && m.id !== actualId);
+  // Find next match with status "BELUM"
+  const nextMatch = matchesSchedule.find((m, idx) => idx > currentIdx && m.status === "BELUM");
   if (nextMatch) {
     const match = nextMatch;
     const pRed = participants.find(p => p.id === match.fighterRedId);
@@ -953,65 +840,79 @@ function loadNextMatch() {
 let matchInterval: NodeJS.Timeout | null = null;
 function checkRunningTimer() {
   if (activeMatch.status === MatchStatus.RUNNING) {
-    if (!activeMatch.timerEndAt || activeMatch.timerEndAt <= 0) {
-      const now = Date.now();
-      activeMatch.timerStartedAt = now;
-      activeMatch.timerEndAt = now + (activeMatch.timeLeft || activeMatch.roundDuration || 120) * 1000;
-    }
     if (!matchInterval) {
       matchInterval = setInterval(() => {
         if (activeMatch.status === MatchStatus.RUNNING) {
           if (activeMatch.timeLeft > 0) {
-            if (activeMatch.timerEndAt && activeMatch.timerEndAt > 0) {
-              activeMatch.timeLeft = Math.max(0, Math.ceil((activeMatch.timerEndAt - Date.now()) / 1000));
-            } else {
-              activeMatch.timeLeft--;
-            }
+            activeMatch.timeLeft--;
+            
+            // Special 30-point gap rule in the second round for Remaja/Dewasa
+            const isRemajaOrDewasa = 
+              activeMatch.division?.toUpperCase() === "REMAJA" || 
+              activeMatch.division?.toUpperCase() === "DEWASA" ||
+              activeMatch.classCategory?.toUpperCase().includes("REMAJA") ||
+              activeMatch.classCategory?.toUpperCase().includes("DEWASA");
 
-            // Check IPSI 2026 WMP point gap rule in Round II or III (20 points for Usia Dini/Pra-Remaja, 30 points for Remaja/Dewasa) for 1 minute (60s)
-            const wmpThreshold = getWmpPointThreshold(activeMatch);
-            if (activeMatch.activeRound === 2 || activeMatch.activeRound === 3) {
+            if (activeMatch.activeRound === 2 && isRemajaOrDewasa) {
               const scoreDiff = Math.abs(activeMatch.scoreRed - activeMatch.scoreBlue);
-              if (scoreDiff >= wmpThreshold) {
+              if (scoreDiff >= 30) {
                 const currentLosingColor = activeMatch.scoreRed > activeMatch.scoreBlue ? "BLUE" : "RED";
                 const currentLosingScore = currentLosingColor === "BLUE" ? activeMatch.scoreBlue : activeMatch.scoreRed;
-
+                
                 if (activeMatch.losingCornerColor === currentLosingColor) {
-                  activeMatch.losingCornerNoScoreDuration = (activeMatch.losingCornerNoScoreDuration || 0) + 1;
-                  activeMatch.lastLosingScore = currentLosingScore;
+                  if (currentLosingScore > (activeMatch.lastLosingScore || 0)) {
+                    // Score increased! Reset duration and update last score
+                    activeMatch.losingCornerNoScoreDuration = 0;
+                    activeMatch.lastLosingScore = currentLosingScore;
+                  } else {
+                    // No score increase, increment duration
+                    activeMatch.losingCornerNoScoreDuration = (activeMatch.losingCornerNoScoreDuration || 0) + 1;
+                    activeMatch.lastLosingScore = currentLosingScore;
+                  }
                 } else {
+                  // Started tracking
                   activeMatch.losingCornerColor = currentLosingColor;
                   activeMatch.lastLosingScore = currentLosingScore;
-                  activeMatch.losingCornerNoScoreDuration = 1;
+                  activeMatch.losingCornerNoScoreDuration = 0;
                 }
 
-                // If 1 minute (60 seconds) is reached, referee stops match and leading corner wins (Menang WMP)!
+                // If 1 minute (60 seconds) is reached, leading corner wins!
                 if ((activeMatch.losingCornerNoScoreDuration || 0) >= 60) {
-                  const winnerColor = activeMatch.scoreRed > activeMatch.scoreBlue ? "RED" : "BLUE";
+                  const winnerColor = currentLosingColor === "BLUE" ? "RED" : "BLUE";
                   const winnerName = winnerColor === "RED" ? activeMatch.fighterRedName : activeMatch.fighterBlueName;
-                  const categoryLabel = wmpThreshold === 20 ? "Usia Dini / Pra-Remaja" : "Remaja / Dewasa";
-
+                  
                   activeMatch.status = MatchStatus.FINISHED;
                   activeMatch.winnerColor = winnerColor;
-                  activeMatch.winnerMethod = `MENANG WMP (SELISIH ${wmpThreshold} POIN SELAMA 60 DETIK)`;
+                  activeMatch.winnerMethod = "MENANG MUTLAK (SELISIH 30 POIN & 1 MENIT TANPA BALASAN)";
                   activeMatch.winnerPublished = true;
-                  activeMatch.dewanPanelLocked = true;
-                  activeMatch.juryPanelLocked = true;
-                  activeMatch.juryPressStats = compileJuryPressStats(activeMatch.logs);
-
+                  
                   activeMatch.logs.unshift({
                     id: Math.random().toString(36).substring(7),
                     timestamp: Date.now(),
                     round: activeMatch.activeRound,
                     fighter: winnerColor,
-                    description: `MENANG WMP! Wasit menghentikan pertandingan pada Babak ${activeMatch.activeRound === 2 ? "II" : "III"} karena selisih nilai mencapai >= ${wmpThreshold} poin (${categoryLabel}) antara sudut Merah dan Biru selama 1 menit (60 S). Pemenang: ${winnerName} (Sudut ${winnerColor === "RED" ? "Merah" : "Biru"}).`,
+                    description: `KEMENANGAN MUTLAK! ${winnerName} menang karena selisih score >= 30 poin dironde kedua dan selama 1 menit tidak ada penambahan nilai dari sudut ${currentLosingColor === "BLUE" ? "Biru" : "Merah"}.`,
                     points: 0,
-                    source: "Wasit / Sistem WMP",
+                    source: "Sistem",
                     type: "SYSTEM"
                   });
 
-                  // Automatically archive finished match into schedule history
-                  archiveActiveMatchToSchedule(winnerColor === "RED" ? "MERAH" : "BIRU");
+                  // Automatically update schedule match
+                  const actualId = activeMatch.id.startsWith("match-") ? activeMatch.id.replace("match-", "") : activeMatch.id;
+                  const currentIdx = matchesSchedule.findIndex(m => m.id === actualId || m.matchNumber === activeMatch.matchNumber);
+                  if (currentIdx !== -1) {
+                    matchesSchedule[currentIdx].status = "SELESAI";
+                    matchesSchedule[currentIdx].winner = winnerColor === "RED" ? "MERAH" : "BIRU";
+                    matchesSchedule[currentIdx].scoreRed = activeMatch.scoreRed;
+                    matchesSchedule[currentIdx].scoreBlue = activeMatch.scoreBlue;
+                    matchesSchedule[currentIdx].redStats = activeMatch.redStats ? { ...activeMatch.redStats } : undefined;
+                    matchesSchedule[currentIdx].blueStats = activeMatch.blueStats ? { ...activeMatch.blueStats } : undefined;
+                    matchesSchedule[currentIdx].fighterRedName = activeMatch.fighterRedName;
+                    matchesSchedule[currentIdx].fighterBlueName = activeMatch.fighterBlueName;
+                    matchesSchedule[currentIdx].fighterRedClub = activeMatch.fighterRedClub;
+                    matchesSchedule[currentIdx].fighterBlueClub = activeMatch.fighterBlueClub;
+                    matchesSchedule[currentIdx].classCategory = activeMatch.classCategory;
+                  }
 
                   // Clear the running interval
                   if (matchInterval) {
@@ -1030,39 +931,30 @@ function checkRunningTimer() {
                       broadcastState();
                     }
                   }, 10000);
-
-                  broadcastState();
-                  return;
                 }
               } else {
-                // Score difference less than threshold, reset tracking
+                // Score difference less than 30, reset tracking
                 activeMatch.losingCornerColor = null;
                 activeMatch.lastLosingScore = undefined;
                 activeMatch.losingCornerNoScoreDuration = 0;
               }
             } else {
-              // Not round 2 or 3, reset tracking
+              // Not round 2 or not Remaja/Dewasa, reset tracking
               activeMatch.losingCornerColor = null;
               activeMatch.lastLosingScore = undefined;
               activeMatch.losingCornerNoScoreDuration = 0;
             }
 
-            // Clean up old visual jury light presses after 2000ms
+            // Clean up old visual jury light presses after 1200ms
             const now = Date.now();
             [1, 2, 3].forEach(juryId => {
               const press = activeMatch.activeJuryPresses[juryId];
-              if (press && (now - press.pressedAt) > 2000) {
+              if (press && (now - press.pressedAt) > 1200) {
                 activeMatch.activeJuryPresses[juryId] = null;
               }
             });
-
-            if (activeMatch.timeLeft > 0) {
-              broadcastState();
-              return;
-            }
-          }
-
-          if (activeMatch.timeLeft <= 0) {
+            broadcastState();
+          } else {
             // End of round automatically
             activeMatch.status = MatchStatus.PAUSED;
             activeMatch.showRoundOverPopup = true;
@@ -1110,13 +1002,13 @@ function checkRunningTimer() {
   }
 }
 
-// Periodic background check to clear visual jury press animations (2000ms retention)
+// Periodic background check to clear visual jury press animations (1200ms retention)
 setInterval(() => {
   const now = Date.now();
   let changed = false;
   [1, 2, 3].forEach(jId => {
     const press = activeMatch.activeJuryPresses[jId];
-    if (press && (now - press.pressedAt) > 2000) {
+    if (press && (now - press.pressedAt) > 1200) {
       activeMatch.activeJuryPresses[jId] = null;
       changed = true;
     }
@@ -1129,9 +1021,6 @@ setInterval(() => {
 // API Routes definitions
 app.get("/api/match-state", (req, res) => {
   updateJuryConnections();
-  if (activeMatch.status === MatchStatus.RUNNING && activeMatch.timerEndAt && activeMatch.timerEndAt > 0) {
-    activeMatch.timeLeft = Math.max(0, Math.ceil((activeMatch.timerEndAt - Date.now()) / 1000));
-  }
   res.json(activeMatch);
 });
 
@@ -1169,6 +1058,7 @@ app.post("/api/device/ping", (req, res) => {
       lastSeen: Date.now()
     };
     updateJuryConnections();
+    broadcastState();
   }
   res.json({ success: true });
 });
@@ -1419,9 +1309,6 @@ app.get("/api/match-state/stream", (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   
-  if (activeMatch.status === MatchStatus.RUNNING && activeMatch.timerEndAt && activeMatch.timerEndAt > 0) {
-    activeMatch.timeLeft = Math.max(0, Math.ceil((activeMatch.timerEndAt - Date.now()) / 1000));
-  }
   // Send current state immediately on connection
   res.write(`data: ${JSON.stringify(activeMatch)}\n\n`);
   
@@ -1455,13 +1342,7 @@ app.post("/api/match-state/update", (req, res) => {
     juryPanelLocked,
     dewanPanelLocked,
     secretarySignalNextRound,
-    division,
-    wmpThreshold,
-    status,
-    winnerPublished,
-    winnerColor,
-    winnerMethod,
-    isTieExtendedPossible
+    division
   } = req.body;
 
   if (eventName !== undefined) activeMatch.eventName = eventName;
@@ -1488,31 +1369,7 @@ app.post("/api/match-state/update", (req, res) => {
   if (juryPanelLocked !== undefined) activeMatch.juryPanelLocked = !!juryPanelLocked;
   if (dewanPanelLocked !== undefined) activeMatch.dewanPanelLocked = !!dewanPanelLocked;
   if (secretarySignalNextRound !== undefined) activeMatch.secretarySignalNextRound = !!secretarySignalNextRound;
-  if (division !== undefined) {
-    activeMatch.division = division;
-    if (wmpThreshold === undefined) {
-      const upperDiv = String(division).toUpperCase();
-      activeMatch.wmpThreshold =
-        upperDiv.includes("USIA DINI") ||
-        upperDiv.includes("USIADINI") ||
-        upperDiv.includes("PRA REMAJA") ||
-        upperDiv.includes("PRA-REMAJA") ||
-        upperDiv.includes("PRAREMAJA")
-          ? 20
-          : 30;
-    }
-  }
-  if (wmpThreshold !== undefined) {
-    activeMatch.wmpThreshold = Number(wmpThreshold) === 20 ? 20 : 30;
-  }
-  if (winnerPublished !== undefined) activeMatch.winnerPublished = !!winnerPublished;
-  if (winnerColor !== undefined) activeMatch.winnerColor = winnerColor;
-  if (winnerMethod !== undefined) activeMatch.winnerMethod = winnerMethod;
-  if (isTieExtendedPossible !== undefined) activeMatch.isTieExtendedPossible = !!isTieExtendedPossible;
-  if (status !== undefined) {
-    activeMatch.status = status;
-    checkRunningTimer();
-  }
+  if (division !== undefined) activeMatch.division = division;
   
   if (roundDuration !== undefined) {
     activeMatch.roundDuration = Number(roundDuration);
@@ -1520,8 +1377,6 @@ app.post("/api/match-state/update", (req, res) => {
       activeMatch.timeLeft = Number(roundDuration);
     }
   }
-
-  recalculateScores();
 
   activeMatch.logs.unshift({
     id: Math.random().toString(36).substring(7),
@@ -1654,21 +1509,12 @@ app.post("/api/match-state/reset", (req, res) => {
 
 // Timer play/pause and time controls
 app.post("/api/match-state/timer", (req, res) => {
-  const { command, timerEndAt, timerStartedAt, timeLeft } = req.body || {};
-  const now = Date.now();
+  const { command } = req.body;
   if (command === "START") {
-    if (typeof timeLeft === "number" && timeLeft > 0) {
-      activeMatch.timeLeft = timeLeft;
-    } else if (!activeMatch.timeLeft || activeMatch.timeLeft <= 0) {
+    if (!activeMatch.timeLeft || activeMatch.timeLeft <= 0) {
       activeMatch.timeLeft = activeMatch.roundDuration || 120;
     }
     activeMatch.status = MatchStatus.RUNNING;
-    activeMatch.timerStartedAt = typeof timerStartedAt === "number" && timerStartedAt > 0 ? timerStartedAt : now;
-    activeMatch.timerEndAt =
-      typeof timerEndAt === "number" && timerEndAt > 0
-        ? timerEndAt
-        : now + activeMatch.timeLeft * 1000;
-    activeMatch.timeLeft = Math.max(0, Math.ceil((activeMatch.timerEndAt - now) / 1000));
     activeMatch.juryPanelLocked = false; // Automatically unlock!
     activeMatch.dewanPanelLocked = false; // Automatically unlock!
     activeMatch.showRoundOverPopup = false; // Automatically hide round over popup on start
@@ -1682,7 +1528,7 @@ app.post("/api/match-state/timer", (req, res) => {
     if (activeMatch.bluePenalties) activeMatch.bluePenalties.disqualified = false;
     activeMatch.logs.unshift({
       id: Math.random().toString(36).substring(7),
-      timestamp: now,
+      timestamp: Date.now(),
       round: activeMatch.activeRound,
       fighter: "RED",
       description: `WAKTU DIMULAI - Ronde ${activeMatch.activeRound}!`,
@@ -1691,17 +1537,10 @@ app.post("/api/match-state/timer", (req, res) => {
       type: "SYSTEM"
     });
   } else if (command === "PAUSE") {
-    if (typeof timeLeft === "number" && timeLeft >= 0) {
-      activeMatch.timeLeft = timeLeft;
-    } else if (activeMatch.status === MatchStatus.RUNNING && activeMatch.timerEndAt) {
-      activeMatch.timeLeft = Math.max(0, Math.ceil((activeMatch.timerEndAt - now) / 1000));
-    }
     activeMatch.status = MatchStatus.PAUSED;
-    activeMatch.timerEndAt = null;
-    activeMatch.timerStartedAt = null;
     activeMatch.logs.unshift({
       id: Math.random().toString(36).substring(7),
-      timestamp: now,
+      timestamp: Date.now(),
       round: activeMatch.activeRound,
       fighter: "RED",
       description: "WAKTU DIHENTIKAN!",
@@ -1710,38 +1549,9 @@ app.post("/api/match-state/timer", (req, res) => {
       type: "SYSTEM"
     });
   } else if (command === "ADD_10") {
-    const baseTime =
-      activeMatch.status === MatchStatus.RUNNING && activeMatch.timerEndAt
-        ? Math.max(0, Math.ceil((activeMatch.timerEndAt - now) / 1000))
-        : activeMatch.timeLeft;
-    activeMatch.timeLeft =
-      typeof timeLeft === "number" ? timeLeft : Math.min(activeMatch.roundDuration, baseTime + 10);
-    if (activeMatch.status === MatchStatus.RUNNING) {
-      activeMatch.timerStartedAt = typeof timerStartedAt === "number" && timerStartedAt > 0 ? timerStartedAt : now;
-      activeMatch.timerEndAt =
-        typeof timerEndAt === "number" && timerEndAt > 0
-          ? timerEndAt
-          : now + activeMatch.timeLeft * 1000;
-    } else {
-      activeMatch.timerEndAt = null;
-      activeMatch.timerStartedAt = null;
-    }
+    activeMatch.timeLeft = Math.min(activeMatch.roundDuration, activeMatch.timeLeft + 10);
   } else if (command === "SUB_10") {
-    const baseTime =
-      activeMatch.status === MatchStatus.RUNNING && activeMatch.timerEndAt
-        ? Math.max(0, Math.ceil((activeMatch.timerEndAt - now) / 1000))
-        : activeMatch.timeLeft;
-    activeMatch.timeLeft = typeof timeLeft === "number" ? timeLeft : Math.max(0, baseTime - 10);
-    if (activeMatch.status === MatchStatus.RUNNING) {
-      activeMatch.timerStartedAt = typeof timerStartedAt === "number" && timerStartedAt > 0 ? timerStartedAt : now;
-      activeMatch.timerEndAt =
-        typeof timerEndAt === "number" && timerEndAt > 0
-          ? timerEndAt
-          : now + activeMatch.timeLeft * 1000;
-    } else {
-      activeMatch.timerEndAt = null;
-      activeMatch.timerStartedAt = null;
-    }
+    activeMatch.timeLeft = Math.max(0, activeMatch.timeLeft - 10);
   }
 
   checkRunningTimer();
@@ -1763,7 +1573,7 @@ app.post("/api/match-state/round", (req, res) => {
       endCurrentRoundPenalties();
       activeMatch.activeRound++;
       activeMatch.timeLeft = activeMatch.roundDuration;
-      activeMatch.status = MatchStatus.IDLE;
+      activeMatch.status = MatchStatus.PAUSED;
       activeMatch.logs.unshift({
         id: Math.random().toString(36).substring(7),
         timestamp: Date.now(),
@@ -1779,20 +1589,20 @@ app.post("/api/match-state/round", (req, res) => {
     const tRound = Number(targetRound);
     if (tRound !== activeMatch.activeRound) {
       endCurrentRoundPenalties();
+      activeMatch.activeRound = tRound;
+      activeMatch.timeLeft = activeMatch.roundDuration;
+      activeMatch.status = MatchStatus.PAUSED;
+      activeMatch.logs.unshift({
+        id: Math.random().toString(36).substring(7),
+        timestamp: Date.now(),
+        round: activeMatch.activeRound,
+        fighter: "RED",
+        description: `Babak disetel ke Ronde ${targetRound} oleh Ketua Pertandingan`,
+        points: 0,
+        source: "Ketua Pertandingan",
+        type: "SYSTEM"
+      });
     }
-    activeMatch.activeRound = tRound;
-    activeMatch.timeLeft = activeMatch.roundDuration;
-    activeMatch.status = MatchStatus.IDLE;
-    activeMatch.logs.unshift({
-      id: Math.random().toString(36).substring(7),
-      timestamp: Date.now(),
-      round: activeMatch.activeRound,
-      fighter: "RED",
-      description: `Babak disetel ke Ronde ${targetRound} oleh Ketua Pertandingan`,
-      points: 0,
-      source: "Ketua Pertandingan",
-      type: "SYSTEM"
-    });
   } else if (roundAction === "FINISH") {
     processMatchFinish();
   }
@@ -1905,53 +1715,24 @@ app.post("/api/match-state/add-round-4", (req, res) => {
   res.json(activeMatch);
 });
 
-// Server-side anti-bounce and consensus deduplication maps
-const lastServerJuryPressByKey: Record<string, number> = {};
-const lastServerConsensusByCombo: Record<string, number> = {};
-const seenServerPressIds = new Set<string>();
-
 // Jury button press endpoint with Consensus Logic
 app.post("/api/jury/press", (req, res) => {
-  const { juryId, fighter, action, pressId } = req.body;
-  const jIdNum = Number(juryId);
+  const { juryId, fighter, action } = req.body;
+  
   const now = Date.now();
   const CONSENSUS_WINDOW_MS = 2000; // Toleransi waktu sinkronisasi konsensus juri: max 2 detik (2000 ms)
 
-  // Strict server-side anti-bounce guard: prevent 1 physical tap from registering multiple times
-  if (pressId && typeof pressId === "string") {
-    if (seenServerPressIds.has(pressId)) {
-      return res.json(activeMatch);
-    }
-    seenServerPressIds.add(pressId);
-    if (seenServerPressIds.size > 500) {
-      const first = seenServerPressIds.values().next().value;
-      if (first) seenServerPressIds.delete(first);
-    }
-  }
-
-  const debounceComboKey = `${jIdNum}_${fighter}_${action}`;
-  const debounceAnyKey = `${jIdNum}_ANY`;
-  if (now - (lastServerJuryPressByKey[debounceComboKey] || 0) < 450) {
-    return res.json(activeMatch);
-  }
-  if (now - (lastServerJuryPressByKey[debounceAnyKey] || 0) < 220) {
-    return res.json(activeMatch);
-  }
-  lastServerJuryPressByKey[debounceComboKey] = now;
-  lastServerJuryPressByKey[debounceAnyKey] = now;
-
   // Show active status indicator instantly on monitor
-  activeMatch.activeJuryPresses[jIdNum] = {
+  activeMatch.activeJuryPresses[Number(juryId)] = {
     fighter,
     action,
-    pressedAt: now,
-    consumed: false
-  } as any;
+    pressedAt: now
+  };
 
   // Schedule auto-clearing visual indicator on backend after 2 seconds
   setTimeout(() => {
-    if (activeMatch.activeJuryPresses[jIdNum]?.pressedAt === now) {
-      activeMatch.activeJuryPresses[jIdNum] = null;
+    if (activeMatch.activeJuryPresses[Number(juryId)]?.pressedAt === now) {
+      activeMatch.activeJuryPresses[Number(juryId)] = null;
       broadcastState();
     }
   }, 2000);
@@ -1963,9 +1744,9 @@ app.post("/api/jury/press", (req, res) => {
       timestamp: now,
       round: activeMatch.activeRound,
       fighter,
-      description: `UJI COBA GAWAI: Juri ${jIdNum} menekan ${action === "PUNCH" ? "Pukulan" : "Tendangan"} ${fighter === "RED" ? "Merah" : "Biru"} (Status: ${activeMatch.status})`,
+      description: `UJI COBA GAWAI: Juri ${juryId} menekan ${action === "PUNCH" ? "Pukulan" : "Tendangan"} ${fighter === "RED" ? "Merah" : "Biru"} (Status: ${activeMatch.status})`,
       points: action === "PUNCH" ? 1 : 2,
-      source: `Juri ${jIdNum}`,
+      source: `Juri ${juryId}`,
       type: action,
       uncounted: true
     });
@@ -1977,8 +1758,8 @@ app.post("/api/jury/press", (req, res) => {
   juryPressHistory = juryPressHistory.filter(p => !p.consumed && (now - p.timestamp) <= CONSENSUS_WINDOW_MS);
 
   const currentPress: JuryPressHistory = {
-    id: (typeof pressId === "string" && pressId) ? pressId : `press_${jIdNum}_${now}`,
-    juryId: jIdNum,
+    id: Math.random().toString(36).substring(7),
+    juryId: Number(juryId),
     fighter,
     action,
     timestamp: now,
@@ -1997,15 +1778,13 @@ app.post("/api/jury/press", (req, res) => {
     log.type === action &&
     (now - log.timestamp) <= CONSENSUS_WINDOW_MS &&
     log.juryIds &&
-    log.juryIds.length >= 2 &&
-    log.juryIds.length < 3 &&
-    !log.juryIds.includes(jIdNum)
+    !log.juryIds.includes(Number(juryId))
   );
 
   if (recentConsensusLog && recentConsensusLog.juryIds) {
-    // Add current jury to the existing consensus without adding extra points to total score
-    recentConsensusLog.juryIds.push(jIdNum);
-    recentConsensusLog.juryIds = Array.from(new Set(recentConsensusLog.juryIds)).sort();
+    // Add current jury to the existing consensus
+    recentConsensusLog.juryIds.push(Number(juryId));
+    recentConsensusLog.juryIds.sort();
     
     // Update labels
     recentConsensusLog.source = `Konsensus Juri (J${recentConsensusLog.juryIds.join(", J")})`;
@@ -2013,31 +1792,29 @@ app.post("/api/jury/press", (req, res) => {
     
     // Mark this press as consumed
     currentPress.consumed = true;
-    if (activeMatch.activeJuryPresses[jIdNum]) {
-      (activeMatch.activeJuryPresses[jIdNum] as any).consumed = true;
-    }
 
     // Apply scores to round-by-round score cards for this jury
-    if (!activeMatch.juryScores[jIdNum]) {
-      activeMatch.juryScores[jIdNum] = {
+    const id = Number(juryId);
+    if (!activeMatch.juryScores[id]) {
+      activeMatch.juryScores[id] = {
         1: { red: 0, blue: 0 },
         2: { red: 0, blue: 0 },
         3: { red: 0, blue: 0 }
       };
     }
     const r = activeMatch.activeRound;
-    if (!activeMatch.juryScores[jIdNum][r]) {
-      activeMatch.juryScores[jIdNum][r] = { red: 0, blue: 0 };
+    if (!activeMatch.juryScores[id][r]) {
+      activeMatch.juryScores[id][r] = { red: 0, blue: 0 };
     }
     if (fighter === "RED") {
-      activeMatch.juryScores[jIdNum][r].red += pointValue;
+      activeMatch.juryScores[id][r].red += pointValue;
     } else {
-      activeMatch.juryScores[jIdNum][r].blue += pointValue;
+      activeMatch.juryScores[id][r].blue += pointValue;
     }
 
   } else {
-    // Evaluate Consensus (Coincidence within 2.0 seconds / 2000ms of other unconsumed presses from distinct juries)
-    const rawMatching = juryPressHistory.filter(p => 
+    // Evaluate Consensus (Coincidence within 2.0 seconds / 2000ms of other unconsumed presses)
+    const matchingPresses = juryPressHistory.filter(p => 
       !p.consumed &&
       p.juryId !== currentPress.juryId &&
       p.fighter === fighter &&
@@ -2045,73 +1822,16 @@ app.post("/api/jury/press", (req, res) => {
       (now - p.timestamp) <= CONSENSUS_WINDOW_MS
     );
 
-    // Deduplicate matching presses by juryId (latest press per juryId)
-    const byJury = new Map<number, JuryPressHistory>();
-    rawMatching.forEach(p => {
-      const prev = byJury.get(p.juryId);
-      if (!prev || p.timestamp > prev.timestamp) {
-        byJury.set(p.juryId, p);
-      }
-    });
-    const matchingPresses = Array.from(byJury.values());
-
     if (matchingPresses.length > 0) {
-      const comboCooldownKey = `${activeMatch.id}_${activeMatch.activeRound}_${fighter}_${action}`;
-      const alreadyLoggedRecently = activeMatch.logs.some(
-        log =>
-          !log.uncounted &&
-          log.round === activeMatch.activeRound &&
-          log.fighter === fighter &&
-          log.type === action &&
-          Math.abs(now - log.timestamp) < 550
-      );
-      if (now - (lastServerConsensusByCombo[comboCooldownKey] || 0) < 550 || alreadyLoggedRecently) {
-        currentPress.consumed = true;
-        if (activeMatch.activeJuryPresses[jIdNum]) {
-          (activeMatch.activeJuryPresses[jIdNum] as any).consumed = true;
-        }
-        rawMatching.forEach(p => {
-          p.consumed = true;
-          if (activeMatch.activeJuryPresses[p.juryId]) {
-            (activeMatch.activeJuryPresses[p.juryId] as any).consumed = true;
-          }
-        });
-        activeMatch.juryPressHistory = juryPressHistory;
-        broadcastState();
-        return res.json(activeMatch);
-      }
-      lastServerConsensusByCombo[comboCooldownKey] = now;
-
       // Consensus is reached within 2.0 seconds between current and matching presses!
       currentPress.consumed = true;
-      if (activeMatch.activeJuryPresses[jIdNum]) {
-        (activeMatch.activeJuryPresses[jIdNum] as any).consumed = true;
-      }
-      rawMatching.forEach(p => {
-        p.consumed = true;
-        if (activeMatch.activeJuryPresses[p.juryId]) {
-          (activeMatch.activeJuryPresses[p.juryId] as any).consumed = true;
-        }
-      });
+      matchingPresses.forEach(p => p.consumed = true);
 
-      const juryIdsInvolved = Array.from(new Set([currentPress.juryId, ...matchingPresses.map(p => p.juryId)])).sort();
+      const juryIdsInvolved = [currentPress.juryId, ...matchingPresses.map(p => p.juryId)].sort();
 
       // Remove single uncounted logs for the presses involved in this consensus
-      const pressIdsToRemove = [currentPress.id, ...rawMatching.map(p => p.id)];
-      activeMatch.logs = activeMatch.logs.filter(log => {
-        if (log.pressId && pressIdsToRemove.includes(log.pressId)) return false;
-        if (
-          log.uncounted &&
-          log.round === activeMatch.activeRound &&
-          log.fighter === fighter &&
-          log.type === action &&
-          (now - log.timestamp) <= CONSENSUS_WINDOW_MS &&
-          juryIdsInvolved.some(id => log.source === `Juri ${id}`)
-        ) {
-          return false;
-        }
-        return true;
-      });
+      const pressIdsToRemove = [currentPress.id, ...matchingPresses.map(p => p.id)];
+      activeMatch.logs = activeMatch.logs.filter(log => !log.pressId || !pressIdsToRemove.includes(log.pressId));
 
       // Apply scores to cumulative stats
       if (fighter === "RED") {
@@ -2148,7 +1868,7 @@ app.post("/api/jury/press", (req, res) => {
         timestamp: now,
         round: activeMatch.activeRound,
         fighter,
-        description: `NILAI MASUK: Juri ${juryIdsInvolved.join(" & ")} setuju +${pointValue} Poin ${action === "PUNCH" ? "Pukulan" : "Tendangan"} ${fighter === "RED" ? "Merah" : "Biru"} (Konsensus <=2 Detik)!`,
+        description: `NILAI MASUK: Juri ${juryIdsInvolved.join(" & ") } setuju +${pointValue} Poin ${action === "PUNCH" ? "Pukulan" : "Tendangan"} ${fighter === "RED" ? "Merah" : "Biru"} (Konsensus <=2 Detik)!`,
         points: pointValue,
         source: `Konsensus Juri (J${juryIdsInvolved.join(", J")})`,
         type: action,
@@ -2164,9 +1884,9 @@ app.post("/api/jury/press", (req, res) => {
         timestamp: now,
         round: activeMatch.activeRound,
         fighter,
-        description: `PERCOBAAN POIN: Juri ${jIdNum} menekan ${action === "PUNCH" ? "Pukulan" : "Tendangan"} ${fighter === "RED" ? "Merah" : "Biru"} (Menunggu Konsensus <=2 Detik)`,
+        description: `PERCOBAAN POIN: Juri ${juryId} menekan ${action === "PUNCH" ? "Pukulan" : "Tendangan"} ${fighter === "RED" ? "Merah" : "Biru"} (Menunggu Konsensus <=2 Detik)`,
         points: pointValue,
-        source: `Juri ${jIdNum}`,
+        source: `Juri ${juryId}`,
         type: action,
         uncounted: true,
         pressId: currentPress.id
@@ -2174,7 +1894,6 @@ app.post("/api/jury/press", (req, res) => {
     }
   }
 
-  activeMatch.juryPressHistory = juryPressHistory;
   broadcastState();
   res.json(activeMatch);
 });
@@ -2184,93 +1903,65 @@ app.post("/api/jury/undo", (req, res) => {
   const { juryId, fighter } = req.body;
   const jId = Number(juryId);
   const r = activeMatch.activeRound;
+  const fLabel = fighter === "RED" ? "Merah" : "Biru";
   const now = Date.now();
 
-  const isMatchingJuryScoreLog = (log: MatchLog) =>
-    (log.type === "PUNCH" || log.type === "KICK") &&
-    (!fighter || log.fighter === fighter) &&
-    (log.uncounted ? log.source === `Juri ${jId}` : Boolean(log.juryIds && log.juryIds.includes(jId)));
-
-  let logIndex = activeMatch.logs.findIndex(log => log.round === r && isMatchingJuryScoreLog(log));
-  if (logIndex === -1) {
-    logIndex = activeMatch.logs.findIndex(log => isMatchingJuryScoreLog(log));
-  }
-
-  if (activeMatch.activeJuryPresses && activeMatch.activeJuryPresses[jId]) {
-    activeMatch.activeJuryPresses[jId] = null;
-  }
-  juryPressHistory = juryPressHistory.filter(p => p.juryId !== jId);
-  activeMatch.juryPressHistory = juryPressHistory;
+  // Find the most recent log item in activeMatch.logs in the current round for this fighter
+  // that was registered by this juryId
+  const logIndex = activeMatch.logs.findIndex(log => 
+    log.round === r &&
+    log.fighter === fighter &&
+    (log.source === `Juri ${jId}` || (log.juryIds && log.juryIds.includes(jId)))
+  );
 
   if (logIndex !== -1) {
     const log = activeMatch.logs[logIndex];
-    const targetFighter = log.fighter;
-    const targetRound = log.round;
-    const fLabel = targetFighter === "RED" ? "Merah" : "Biru";
     const pointValue = log.points;
 
-    if (!log.uncounted && log.juryIds && log.juryIds.includes(jId)) {
-      const remainingJuries = log.juryIds.filter(id => id !== jId);
-
-      if (remainingJuries.length >= 2) {
-        if (activeMatch.juryScores[jId] && activeMatch.juryScores[jId][targetRound]) {
-          if (targetFighter === "RED") {
-            activeMatch.juryScores[jId][targetRound].red = Math.max(0, activeMatch.juryScores[jId][targetRound].red - pointValue);
+    // Revert consensus scores and stats if applicable
+    if (log.juryIds && log.juryIds.includes(jId)) {
+      log.juryIds.forEach(id => {
+        if (activeMatch.juryScores[id] && activeMatch.juryScores[id][r]) {
+          if (fighter === "RED") {
+            activeMatch.juryScores[id][r].red = Math.max(0, activeMatch.juryScores[id][r].red - pointValue);
           } else {
-            activeMatch.juryScores[jId][targetRound].blue = Math.max(0, activeMatch.juryScores[jId][targetRound].blue - pointValue);
+            activeMatch.juryScores[id][r].blue = Math.max(0, activeMatch.juryScores[id][r].blue - pointValue);
           }
         }
-        log.juryIds = remainingJuries;
-        log.source = `Konsensus Juri (J${remainingJuries.join(", J")})`;
-        log.description = `NILAI MASUK: Juri ${remainingJuries.join(" & ")} setuju +${pointValue} Poin ${log.type === "PUNCH" ? "Pukulan" : "Tendangan"} ${fLabel} (Konsensus <=2 Detik)!`;
+      });
+
+      // Revert Stats
+      if (fighter === "RED") {
+        if (log.type === "PUNCH") {
+          activeMatch.redStats.punches = Math.max(0, activeMatch.redStats.punches - 1);
+        } else {
+          activeMatch.redStats.kicks = Math.max(0, activeMatch.redStats.kicks - 1);
+        }
       } else {
-        log.juryIds.forEach(id => {
-          if (activeMatch.juryScores[id] && activeMatch.juryScores[id][targetRound]) {
-            if (targetFighter === "RED") {
-              activeMatch.juryScores[id][targetRound].red = Math.max(0, activeMatch.juryScores[id][targetRound].red - pointValue);
-            } else {
-              activeMatch.juryScores[id][targetRound].blue = Math.max(0, activeMatch.juryScores[id][targetRound].blue - pointValue);
-            }
-          }
-        });
-
-        if (targetFighter === "RED") {
-          if (log.type === "PUNCH") {
-            activeMatch.redStats.punches = Math.max(0, activeMatch.redStats.punches - 1);
-          } else {
-            activeMatch.redStats.kicks = Math.max(0, activeMatch.redStats.kicks - 1);
-          }
+        if (log.type === "PUNCH") {
+          activeMatch.blueStats.punches = Math.max(0, activeMatch.blueStats.punches - 1);
         } else {
-          if (log.type === "PUNCH") {
-            activeMatch.blueStats.punches = Math.max(0, activeMatch.blueStats.punches - 1);
-          } else {
-            activeMatch.blueStats.kicks = Math.max(0, activeMatch.blueStats.kicks - 1);
-          }
+          activeMatch.blueStats.kicks = Math.max(0, activeMatch.blueStats.kicks - 1);
         }
-
-        if (remainingJuries.length === 1) {
-          const remId = remainingJuries[0];
-          log.uncounted = true;
-          log.source = `Juri ${remId}`;
-          delete log.juryIds;
-          log.description = `PERCOBAAN POIN: Juri ${remId} menekan ${log.type === "PUNCH" ? "Pukulan" : "Tendangan"} ${fLabel} (Menunggu Konsensus <= 2 Detik)`;
-        } else {
-          activeMatch.logs.splice(logIndex, 1);
-        }
-
-        activeMatch.logs.unshift({
-          id: Math.random().toString(36).substring(7),
-          timestamp: now,
-          round: targetRound,
-          fighter: targetFighter,
-          description: `BATAL POIN: Poin ${log.type === "PUNCH" ? "Pukulan" : "Tendangan"} ${fLabel} dibatalkan oleh Juri ${jId}.`,
-          points: -pointValue,
-          source: `Juri ${jId}`,
-          type: "SYSTEM"
-        });
       }
-    } else {
-      activeMatch.logs.splice(logIndex, 1);
+
+      // Add a system log informing the undo
+      activeMatch.logs.unshift({
+        id: Math.random().toString(36).substring(7),
+        timestamp: now,
+        round: r,
+        fighter,
+        description: `BATAL POIN: Poin ${log.type === "PUNCH" ? "Pukulan" : "Tendangan"} ${fLabel} dibatalkan oleh Juri ${jId}.`,
+        points: -pointValue,
+        source: `Juri ${jId}`,
+        type: "SYSTEM"
+      });
+    }
+
+    // Since we unshifted a cancel log above if consensus, we find the index again
+    const finalLogIndex = activeMatch.logs.findIndex((l, idx) => idx >= (log.juryIds && log.juryIds.includes(jId) ? 1 : 0) && l.id === log.id);
+    if (finalLogIndex !== -1) {
+      activeMatch.logs.splice(finalLogIndex, 1);
     }
 
     recalculateScores();
@@ -2567,7 +2258,23 @@ app.post("/api/dewan/action", (req, res) => {
       type: "SYSTEM"
     });
 
-    archiveActiveMatchToSchedule(fighter === "RED" ? "MERAH" : "BIRU");
+    const actualId = activeMatch.id.startsWith("match-") ? activeMatch.id.replace("match-", "") : activeMatch.id;
+    const currentIdx = matchesSchedule.findIndex(m => m.id === actualId || m.matchNumber === activeMatch.matchNumber);
+    if (currentIdx !== -1) {
+      matchesSchedule[currentIdx].status = "SELESAI" as any;
+      matchesSchedule[currentIdx].winner = fighter === "RED" ? "MERAH" : "BIRU";
+      matchesSchedule[currentIdx].scoreRed = activeMatch.scoreRed;
+      matchesSchedule[currentIdx].scoreBlue = activeMatch.scoreBlue;
+      matchesSchedule[currentIdx].redStats = activeMatch.redStats ? { ...activeMatch.redStats } : undefined;
+      matchesSchedule[currentIdx].blueStats = activeMatch.blueStats ? { ...activeMatch.blueStats } : undefined;
+      matchesSchedule[currentIdx].fighterRedName = activeMatch.fighterRedName;
+      matchesSchedule[currentIdx].fighterBlueName = activeMatch.fighterBlueName;
+      matchesSchedule[currentIdx].fighterRedClub = activeMatch.fighterRedClub;
+      matchesSchedule[currentIdx].fighterBlueClub = activeMatch.fighterBlueClub;
+      matchesSchedule[currentIdx].classCategory = activeMatch.classCategory;
+      matchesSchedule[currentIdx].juryPressStats = compileJuryPressStats(activeMatch.logs);
+      activeMatch.juryPressStats = { ...matchesSchedule[currentIdx].juryPressStats };
+    }
 
     if (autoAdvanceTimer) {
       clearTimeout(autoAdvanceTimer);
@@ -2969,12 +2676,15 @@ app.post("/api/athletes/sync-one", (req, res) => {
       participants,
       categories
     });
+  } else {
+    // SENI category
+    return res.json({
+      success: true,
+      message: `Atlet seni ${athleteName} berhasil didaftarkan ke antrean skoring seni!`,
+      athleteId,
+      category: "SENI"
+    });
   }
-
-  return res.json({
-    success: true,
-    athleteId
-  });
 });
 
 // -- Delete Single Athlete API
@@ -3122,8 +2832,24 @@ app.post("/api/tournament/import-batch", (req, res) => {
   if (Array.isArray(newMatches)) {
     matchesSchedule = newMatches;
     if (newMatches.length > 0) {
-      loadAndActivateMatch(newMatches[0].id);
-      broadcastState();
+      const activeMatchInNew = newMatches.find((m: any) => m && m.id === activeMatch.id);
+      if (activeMatchInNew) {
+        // Perbarui atribut partai aktif (nama atlet, kontingen, nomor partai) tanpa mengganggu skor berjalan
+        if (activeMatchInNew.matchNumber) {
+          activeMatch.matchNumber = `Partai ${String(activeMatchInNew.matchNumber).replace(/^(partai\s*)+/i, "")}`;
+        }
+        if (activeMatchInNew.arena) activeMatch.arena = activeMatchInNew.arena;
+        if (activeMatchInNew.stage) activeMatch.stage = activeMatchInNew.stage;
+        if (activeMatchInNew.classCategory) activeMatch.classCategory = activeMatchInNew.classCategory;
+        if (activeMatchInNew.fighterRedName) activeMatch.fighterRedName = activeMatchInNew.fighterRedName;
+        if (activeMatchInNew.fighterRedClub) activeMatch.fighterRedClub = activeMatchInNew.fighterRedClub;
+        if (activeMatchInNew.fighterBlueName) activeMatch.fighterBlueName = activeMatchInNew.fighterBlueName;
+        if (activeMatchInNew.fighterBlueClub) activeMatch.fighterBlueClub = activeMatchInNew.fighterBlueClub;
+        broadcastState();
+      } else if (activeMatch.id === "match-none" || !activeMatch.id) {
+        loadAndActivateMatch(newMatches[0].id);
+        broadcastState();
+      }
     } else {
       // Reset the active match running state to a clean template since all matches are deleted
       activeMatch.id = "match-none";
@@ -3358,11 +3084,8 @@ app.post("/api/matches-schedule/load", (req, res) => {
 async function startServer() {
   // Load saved match state on startup to automatically resume previous matches
   try {
-    const matchFileToRead = fs.existsSync(ACTIVE_MATCH_FILE)
-      ? ACTIVE_MATCH_FILE
-      : (fs.existsSync("./activeMatch.json") ? "./activeMatch.json" : "");
-    if (matchFileToRead) {
-      const savedData = fs.readFileSync(matchFileToRead, "utf8");
+    if (fs.existsSync("./activeMatch.json")) {
+      const savedData = fs.readFileSync("./activeMatch.json", "utf8");
       const parsed = JSON.parse(savedData);
       if (parsed && parsed.id) {
         // Sanitize bloated base64 logos from old cache
@@ -3371,13 +3094,6 @@ async function startServer() {
         }
         if (parsed.logoRight && typeof parsed.logoRight === "string" && parsed.logoRight.length > 500000) {
           parsed.logoRight = "";
-        }
-        if (parsed.status !== MatchStatus.FINISHED) {
-          parsed.winnerMethod = undefined;
-          parsed.winnerColor = null;
-          parsed.winnerPublished = false;
-          if (parsed.redPenalties) parsed.redPenalties.disqualified = false;
-          if (parsed.bluePenalties) parsed.bluePenalties.disqualified = false;
         }
         activeMatch = parsed;
         console.log(`[RECOVERY] Memulihkan sisa waktu & status pertandingan sebelumnya dari file: Partai ${activeMatch.matchNumber}, Sisa Waktu: ${activeMatch.timeLeft} detik`);
@@ -3399,40 +3115,57 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    let distPath = process.env.JRZ_DIST_PATH || path.join(process.cwd(), "dist");
-    const envDistHtml = process.env.JRZ_DIST_PATH ? path.join(process.env.JRZ_DIST_PATH, "index.html") : "";
-    const cwdDistHtml = path.join(process.cwd(), "dist", "index.html");
-    const dirDistHtml = path.join(_currentDir, "dist", "index.html");
-    const parentDirDistHtml = path.join(_currentDir, "..", "dist", "index.html");
-    const localDirHtml = path.join(_currentDir, "index.html");
+    let distPath = path.join(process.cwd(), "dist");
+    
+    // In compiled dist/server.cjs context, __dirname is the 'dist' directory itself.
+    const localDirHtml = path.join(__dirname, "index.html");
+    const parentDirDistHtml = path.join(__dirname, "..", "dist", "index.html");
 
-    if (envDistHtml && fs.existsSync(envDistHtml)) {
-      distPath = process.env.JRZ_DIST_PATH!;
-    } else if (fs.existsSync(cwdDistHtml)) {
-      distPath = path.join(process.cwd(), "dist");
-    } else if (fs.existsSync(dirDistHtml)) {
-      distPath = path.join(_currentDir, "dist");
+    if (fs.existsSync(localDirHtml)) {
+      distPath = __dirname;
     } else if (fs.existsSync(parentDirDistHtml)) {
-      distPath = path.join(_currentDir, "..", "dist");
-    } else if (fs.existsSync(localDirHtml)) {
-      distPath = _currentDir;
+      distPath = path.join(__dirname, "..", "dist");
+    } else if ((process as any).resourcesPath) {
+      const resPath = (process as any).resourcesPath;
+      const p1 = path.join(resPath, "app.asar", "dist");
+      const p2 = path.join(resPath, "app", "dist");
+      const p3 = path.join(resPath, "app.asar");
+      const p4 = path.join(resPath, "app");
+      
+      if (fs.existsSync(path.join(p1, "index.html"))) {
+        distPath = p1;
+      } else if (fs.existsSync(path.join(p2, "index.html"))) {
+        distPath = p2;
+      } else if (fs.existsSync(path.join(p3, "index.html"))) {
+        distPath = p3;
+      } else if (fs.existsSync(path.join(p4, "index.html"))) {
+        distPath = p4;
+      }
     }
     
     console.log(`[DISCO IPSI ENGINE] Serving static client files from production path: ${distPath}`);
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
-      const offlineIndex = path.join(distPath, "index.offline.html");
-      const mainIndex = path.join(distPath, "index.html");
-      if (fs.existsSync(offlineIndex) && (req.hostname === "localhost" || req.hostname === "127.0.0.1")) {
-        res.sendFile(offlineIndex);
-      } else {
-        res.sendFile(mainIndex);
-      }
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
   const serverInstance = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Pencak Silat IPSI Server is up & running on port ${PORT}`);
+
+    // Inisialisasi awal: Ambil data pertandingan aktif dari Firebase Cloud RTDB jika ada
+    fetch(`${FIREBASE_RTDB_BASE}/arenas/A/activeMatch.json`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.id && data.id !== "match-none") {
+          console.log("[Server Startup] Berhasil memuat status pertandingan aktif dari Firebase RTDB:", data.id, data.matchNumber);
+          activeMatch = { ...activeMatch, ...data };
+          broadcastState();
+        }
+      })
+      .catch((e) => {
+        console.warn("[Server Startup] Firebase Cloud RTDB fallback:", e?.message);
+      });
   });
 
   serverInstance.on("error", (err: any) => {
