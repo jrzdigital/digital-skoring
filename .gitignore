@@ -2,9 +2,16 @@ node_modules/
 build/
 dist/
 dist-server/
+dist_electron/
+PAKET_KLIEN_JRZ_SCORE/
+public/gh-bundle/
 release/
 coverage/
 .DS_Store
 *.log
+*.exe
+*.7z
+*.pak
+*.dll
 .env*
 !.env.example

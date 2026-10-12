@@ -83,7 +83,6 @@ import {
   generateMatchesForClass,
   generateRoundRobinMatchesForClass 
 } from "../utils/baganGenerator";
-import { drawPdfLogo, preloadLogoForPdf } from "../utils/pdfKopHelper";
 
 export function DeviceBatteryIndicator() {
   const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
@@ -151,28 +150,28 @@ export function DeviceBatteryIndicator() {
 }
 
 function BreakCountdownTimer() {
-  const [timeLeft, setTimeLeft] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(60);
   const [isActive, setIsActive] = useState(true);
-  const prevBreakTimeRef = useRef<number>(30);
 
   useEffect(() => {
-    if (!isActive || timeLeft <= 0) return;
-    const interval = setInterval(() => {
-      setTimeLeft((prev) => Math.max(0, prev - 1));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isActive, timeLeft > 0]);
-
-  useEffect(() => {
-    if (timeLeft === 0 && prevBreakTimeRef.current > 0) {
-      setIsActive(false);
-      // Memberikan tanda suara peluit ketika selesai 30 detik
-      sound.playWhistle();
+    let interval: any = null;
+    if (isActive && timeLeft > 0) {
+      interval = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            // Play a long buzzer tone and alert complete
+            sound.playBuzzer();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
     }
-    prevBreakTimeRef.current = timeLeft;
-  }, [timeLeft]);
+    return () => clearInterval(interval);
+  }, [isActive, timeLeft]);
 
-  const percentage = (timeLeft / 30) * 100;
+  const percentage = (timeLeft / 60) * 100;
 
   return (
     <div className="bg-[#07112a] border border-blue-500/40 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 mt-2 text-left shadow-[0_0_20px_rgba(37,99,235,0.15)]">
@@ -204,7 +203,7 @@ function BreakCountdownTimer() {
         </div>
         <div className="flex flex-col">
           <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest leading-none">
-            ⏱️ TIMER JEDA ANTAR BABAK (30 DETIK)
+            ⏱️ TIMER JEDA ANTAR BABAK (1 MENIT)
           </span>
           <span className="text-[12px] text-white font-bold mt-1.5 leading-snug">
             {timeLeft > 0 ? (
@@ -214,7 +213,7 @@ function BreakCountdownTimer() {
             )}
           </span>
           <p className="text-[9.5px] text-slate-300 font-bold mt-0.5">
-            Mundur dari 30 dtk. Memberikan tanda suara peluit di akhir jeda.
+            Mundur dari 60 dtk. Mengeluarkan sinyal buzzer di akhir jeda.
           </p>
         </div>
       </div>
@@ -235,12 +234,12 @@ function BreakCountdownTimer() {
         <button
           onClick={() => {
             sound.playClick();
-            setTimeLeft(30);
+            setTimeLeft(60);
             setIsActive(true);
           }}
           className="px-3 py-1.5 text-[9.5px] font-sans font-black bg-[#0b1638] hover:bg-[#13255c] text-cyan-300 rounded-lg uppercase transition-all tracking-wider cursor-pointer active:scale-95 border border-blue-500/30"
         >
-          Reset 30s
+          Reset
         </button>
       </div>
     </div>
@@ -340,7 +339,7 @@ interface SekretarisPanelProps {
   isFullscreen: boolean;
   onSubScreenChange?: (isSubScreen: boolean) => void;
   onOpenOperatorPanel?: () => void;
-  initialTab?: "INPUT" | "LOTING" | "BAGAN" | "KONTROL" | "PARAMETER" | "REGISTRASI";
+  initialTab?: "INPUT" | "BAGAN" | "KONTROL" | "PARAMETER" | "REGISTRASI" | "LOTING";
 }
 
 export function SekretarisPanel({
@@ -358,14 +357,12 @@ export function SekretarisPanel({
   initialTab,
 }: SekretarisPanelProps) {
   // Local state for all editable fields to allow typing without jitter
-  const [eventName, setEventName] = useState(() => {
-    return localStorage.getItem("sekretaris_eventName") || localStorage.getItem("jrz_event_name") || "";
-  });
+  const [eventName, setEventName] = useState("");
   const [tempatPelaksanaan, setTempatPelaksanaan] = useState(() => {
-    return localStorage.getItem("sekretaris_tempatPelaksanaan") || localStorage.getItem("jrz_tempat_pelaksanaan") || "";
+    return localStorage.getItem("sekretaris_tempatPelaksanaan") || "";
   });
   const [waktuPelaksanaan, setWaktuPelaksanaan] = useState(() => {
-    return localStorage.getItem("sekretaris_waktuPelaksanaan") || localStorage.getItem("jrz_waktu_pelaksanaan") || "";
+    return localStorage.getItem("sekretaris_waktuPelaksanaan") || "";
   });
   const [partaiNumber, setPartaiNumber] = useState("");
   const [tahap, setTahap] = useState<"PENYISIHAN" | "PEREMPATFINAL" | "SEMIFINAL" | "FINAL">("PENYISIHAN");
@@ -379,12 +376,8 @@ export function SekretarisPanel({
   const [atlitBiruName, setAtlitBiruName] = useState("");
   const [kontingenBiru, setKontingenBiru] = useState("");
 
-  const [logoLeftLocal, setLogoLeftLocal] = useState(() => {
-    return localStorage.getItem("sekretaris_logoLeftLocal") || localStorage.getItem("jrz_logo_left") || "";
-  });
-  const [logoRightLocal, setLogoRightLocal] = useState(() => {
-    return localStorage.getItem("sekretaris_logoRightLocal") || localStorage.getItem("jrz_logo_right") || "";
-  });
+  const [logoLeftLocal, setLogoLeftLocal] = useState("");
+  const [logoRightLocal, setLogoRightLocal] = useState("");
   const [focusedField, setFocusedField] = useState<string | null>(null);
 
   // Schedule list & modal states (with localStorage cache fallback)
@@ -426,50 +419,33 @@ export function SekretarisPanel({
   
   // States for manual input of print-out PDF region & date
   const [namaDaerahCetak, setNamaDaerahCetak] = useState(() => {
-    return localStorage.getItem("sekretaris_namaDaerahCetak") || localStorage.getItem("jrz_nama_daerah_cetak") || "IDI RAYEUK";
+    return localStorage.getItem("sekretaris_namaDaerahCetak") || "IDI RAYEUK";
   });
   const [tanggalCetakDokumen, setTanggalCetakDokumen] = useState(() => {
-    return localStorage.getItem("sekretaris_tanggalCetakDokumen") || localStorage.getItem("jrz_tanggal_cetak_dokumen") || "01 JULI 2026";
+    return localStorage.getItem("sekretaris_tanggalCetakDokumen") || "01 JULI 2026";
   });
   const [namaKetuaPertandingan, setNamaKetuaPertandingan] = useState(() => {
-    return localStorage.getItem("sekretaris_namaKetuaPertandingan") || localStorage.getItem("jrz_nama_ketua_pertandingan") || "";
+    return localStorage.getItem("sekretaris_namaKetuaPertandingan") || "";
   });
   const [namaSekretarisPertandingan, setNamaSekretarisPertandingan] = useState(() => {
-    return localStorage.getItem("sekretaris_namaSekretarisPertandingan") || localStorage.getItem("jrz_nama_sekretaris_pertandingan") || "";
+    return localStorage.getItem("sekretaris_namaSekretarisPertandingan") || "";
   });
 
   const updateNamaDaerahCetak = (val: string) => {
     setNamaDaerahCetak(val);
-    try {
-      localStorage.setItem("sekretaris_namaDaerahCetak", val);
-      localStorage.setItem("jrz_nama_daerah_cetak", val);
-      window.dispatchEvent(new Event("jrz_parameters_updated"));
-    } catch {}
+    localStorage.setItem("sekretaris_namaDaerahCetak", val);
   };
   const updateTanggalCetakDokumen = (val: string) => {
     setTanggalCetakDokumen(val);
-    try {
-      localStorage.setItem("sekretaris_tanggalCetakDokumen", val);
-      localStorage.setItem("jrz_tanggal_cetak_dokumen", val);
-      localStorage.setItem("jrz_tanggal_hari", val);
-      window.dispatchEvent(new Event("jrz_parameters_updated"));
-    } catch {}
+    localStorage.setItem("sekretaris_tanggalCetakDokumen", val);
   };
   const updateNamaKetuaPertandingan = (val: string) => {
     setNamaKetuaPertandingan(val);
-    try {
-      localStorage.setItem("sekretaris_namaKetuaPertandingan", val);
-      localStorage.setItem("jrz_nama_ketua_pertandingan", val);
-      window.dispatchEvent(new Event("jrz_parameters_updated"));
-    } catch {}
+    localStorage.setItem("sekretaris_namaKetuaPertandingan", val);
   };
   const updateNamaSekretarisPertandingan = (val: string) => {
     setNamaSekretarisPertandingan(val);
-    try {
-      localStorage.setItem("sekretaris_namaSekretarisPertandingan", val);
-      localStorage.setItem("jrz_nama_sekretaris_pertandingan", val);
-      window.dispatchEvent(new Event("jrz_parameters_updated"));
-    } catch {}
+    localStorage.setItem("sekretaris_namaSekretarisPertandingan", val);
   };
 
   // PDF download overlay states
@@ -481,25 +457,24 @@ export function SekretarisPanel({
 
   // Unified Sekretaris Navigation:
   // Primary (Level 1): PARAMETER (Parameter Pertandingan) & REGISTRASI (registrasi data)
-  // Sub-menu in REGISTRASI (Level 2): INPUT (Input data), LOTING (menu loting), BAGAN (bagan braket), KONTROL (kontrol partai)
+  // Sub-menu in REGISTRASI (Level 2): INPUT (Input data), BAGAN (bagan braket), KONTROL (kontrol partai)
   const [activeTab, setActiveTab] = useState<"PARAMETER" | "REGISTRASI">(() => {
-    if (initialTab === "INPUT" || initialTab === "LOTING" || initialTab === "BAGAN" || initialTab === "KONTROL" || initialTab === "REGISTRASI") {
+    if (initialTab === "INPUT" || initialTab === "BAGAN" || initialTab === "KONTROL" || initialTab === "REGISTRASI" || initialTab === "LOTING") {
       return "REGISTRASI";
     }
     return "PARAMETER";
   });
 
-  const [registrasiActiveTab, setRegistrasiActiveTab] = useState<"INPUT" | "LOTING" | "BAGAN" | "KONTROL">(() => {
-    if (initialTab === "LOTING") return "LOTING";
+  const [registrasiActiveTab, setRegistrasiActiveTab] = useState<"INPUT" | "BAGAN" | "KONTROL">(() => {
     if (initialTab === "BAGAN") return "BAGAN";
     if (initialTab === "KONTROL") return "KONTROL";
     return "INPUT";
   });
 
   useEffect(() => {
-    if (initialTab === "INPUT" || initialTab === "LOTING" || initialTab === "BAGAN" || initialTab === "KONTROL") {
+    if (initialTab === "INPUT" || initialTab === "BAGAN" || initialTab === "KONTROL" || initialTab === "LOTING") {
       setActiveTab("REGISTRASI");
-      setRegistrasiActiveTab(initialTab);
+      setRegistrasiActiveTab(initialTab === "LOTING" ? "INPUT" : initialTab);
     } else if (initialTab === "REGISTRASI") {
       setActiveTab("REGISTRASI");
     } else if (initialTab === "PARAMETER") {
@@ -728,47 +703,17 @@ export function SekretarisPanel({
   // Load state values once active state is fetched
   useEffect(() => {
     if (state) {
-      if (focusedField !== "eventName") {
-        const savedEv = localStorage.getItem("sekretaris_eventName");
-        const resolvedEv = savedEv !== null ? savedEv : (state.eventName || localStorage.getItem("jrz_event_name") || "");
-        setEventName(resolvedEv);
-        if (resolvedEv) {
-          try { localStorage.setItem("jrz_event_name", resolvedEv); } catch {}
-        }
-      }
+      if (focusedField !== "eventName") setEventName(state.eventName || "");
       if (focusedField !== "partaiNumber") setPartaiNumber(state.matchNumber || "");
       if (focusedField !== "tahap") setTahap(state.stage || "PENYISIHAN");
       setGender(state.gender || "PUTRA");
       setDurasiTimer(state.roundDuration || 120);
-      if (state.division) {
-        setKategoriUsia(state.division);
-      }
       if (focusedField !== "atlitMerahName") setAtlitMerahName(state.fighterRedName || "");
       if (focusedField !== "kontingenMerah") setKontingenMerah(state.fighterRedClub || "");
       if (focusedField !== "atlitBiruName") setAtlitBiruName(state.fighterBlueName || "");
       if (focusedField !== "kontingenBiru") setKontingenBiru(state.fighterBlueClub || "");
-
-      const savedLeft = localStorage.getItem("sekretaris_logoLeftLocal") ?? localStorage.getItem("jrz_logo_left");
-      const nextLeft = state.logoLeft || (savedLeft !== null ? savedLeft : "");
-      setLogoLeftLocal(nextLeft);
-      if (nextLeft) {
-        preloadLogoForPdf(nextLeft);
-        try {
-          localStorage.setItem("jrz_logo_left", nextLeft);
-          localStorage.setItem("sekretaris_logoLeftLocal", nextLeft);
-        } catch {}
-      }
-
-      const savedRight = localStorage.getItem("sekretaris_logoRightLocal") ?? localStorage.getItem("jrz_logo_right");
-      const nextRight = state.logoRight || (savedRight !== null ? savedRight : "");
-      setLogoRightLocal(nextRight);
-      if (nextRight) {
-        preloadLogoForPdf(nextRight);
-        try {
-          localStorage.setItem("jrz_logo_right", nextRight);
-          localStorage.setItem("sekretaris_logoRightLocal", nextRight);
-        } catch {}
-      }
+      setLogoLeftLocal(state.logoLeft || "");
+      setLogoRightLocal(state.logoRight || "");
 
       // Attempt to extract class category code
       if (state.classCategory && focusedField !== "kelasNomor") {
@@ -941,22 +886,11 @@ export function SekretarisPanel({
     // Generate classCategory string: "Tanding Kelas {kelasNomor} {gender} ({rangeWeight})" 
     const classCatStr = `Tanding Kelas ${kelasNomor || "C"} ${gender === "PUTRI" ? "Putri" : "Putra"}`;
     
-    const currentWmpThreshold: 20 | 30 =
-      updatedFields?.wmpThreshold === 20 || updatedFields?.wmpThreshold === 30
-        ? updatedFields.wmpThreshold
-        : state?.wmpThreshold === 20 || state?.wmpThreshold === 30
-        ? state.wmpThreshold
-        : kategoriUsia === "USIA DINI" || kategoriUsia === "PRA-REMAJA"
-        ? 20
-        : 30;
-
     const saveData = {
       eventName,
       matchNumber: partaiNumber,
       stage: tahap,
       gender,
-      division: kategoriUsia,
-      wmpThreshold: currentWmpThreshold,
       roundDuration: Number(durasiTimer),
       fighterRedName: atlitMerahName.toUpperCase(),
       fighterRedClub: kontingenMerah.toUpperCase(),
@@ -968,23 +902,15 @@ export function SekretarisPanel({
       ...updatedFields
     };
 
-    try {
-      if (saveData.eventName !== undefined) {
-        localStorage.setItem("jrz_event_name", saveData.eventName);
-        localStorage.setItem("sekretaris_eventName", saveData.eventName);
-      }
-      if (saveData.logoLeft !== undefined) {
-        localStorage.setItem("jrz_logo_left", saveData.logoLeft);
-        localStorage.setItem("sekretaris_logoLeftLocal", saveData.logoLeft);
-        if (saveData.logoLeft) preloadLogoForPdf(saveData.logoLeft);
-      }
-      if (saveData.logoRight !== undefined) {
-        localStorage.setItem("jrz_logo_right", saveData.logoRight);
-        localStorage.setItem("sekretaris_logoRightLocal", saveData.logoRight);
-        if (saveData.logoRight) preloadLogoForPdf(saveData.logoRight);
-      }
-      window.dispatchEvent(new Event("jrz_parameters_updated"));
-    } catch {}
+    if (saveData.eventName) {
+      try { localStorage.setItem("jrz_event_name", saveData.eventName); } catch {}
+    }
+    if (saveData.logoLeft) {
+      try { localStorage.setItem("jrz_logo_left", saveData.logoLeft); } catch {}
+    }
+    if (saveData.logoRight) {
+      try { localStorage.setItem("jrz_logo_right", saveData.logoRight); } catch {}
+    }
 
     onUpdateMetadata(saveData);
   };
@@ -1090,17 +1016,26 @@ export function SekretarisPanel({
     return total;
   };
 
-  // Helper to read and optimize logo image (handles large files & SVGs, auto-rescaling on canvas preserving alpha channel)
+  // Helper to read and optimize logo image (handles large files, auto-rescaling on canvas preserving alpha channel)
   const processAndOptimizeImage = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
+      // If SVG format, preserve original vector format
+      if (file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg")) {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = (err) => reject(err);
+        reader.readAsDataURL(file);
+        return;
+      }
+
       const objectUrl = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => {
         URL.revokeObjectURL(objectUrl);
         try {
-          const maxDimension = 500; // Sharp resolution for monitors, scoreboards & PDF print while staying compact
-          let width = img.naturalWidth || img.width || 400;
-          let height = img.naturalHeight || img.height || 400;
+          const maxDimension = 1200; // Ultra-sharp resolution for monitors, scoreboards & PDF print
+          let width = img.naturalWidth || img.width;
+          let height = img.naturalHeight || img.height;
 
           if (width > maxDimension || height > maxDimension) {
             if (width > height) {
@@ -1129,9 +1064,8 @@ export function SekretarisPanel({
           ctx.clearRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
 
-          // Export as PNG (preserves full alpha transparency and works directly in jsPDF)
-          const dataUrl = canvas.toDataURL("image/png", 0.92);
-          preloadLogoForPdf(dataUrl);
+          // Export as PNG (preserves full alpha transparency)
+          const dataUrl = canvas.toDataURL("image/png", 0.95);
           resolve(dataUrl);
         } catch (err) {
           const reader = new FileReader();
@@ -1188,10 +1122,7 @@ export function SekretarisPanel({
 
   // Timer play control post
   const handleTimerAction = async (command: "START" | "PAUSE" | "ADD_10" | "SUB_10" | "RESET") => {
-    // Sound dihilangkan saat jeda/pause dan lanjutkan/resume sesuai instruksi
-    if (command !== "START" && command !== "PAUSE") {
-      sound.playClick();
-    }
+    sound.playClick();
     let finalCommand = command;
     if (command === "START" && state?.status === MatchStatus.RUNNING) {
       finalCommand = "PAUSE";
@@ -1586,8 +1517,23 @@ export function SekretarisPanel({
 
   // Vector draw logo helper for PDF exports with high redundancy fail-safes
   const drawLogoPdf = (doc: any, logoStr: string, x: number, y: number, size: number) => {
-    const cleanLogo = logoStr === "/logo_panel_dewan.svg" ? "" : logoStr;
-    drawPdfLogo(doc, cleanLogo, x, y, size);
+    try {
+      if (logoStr && logoStr.startsWith("data:image")) {
+        doc.addImage(logoStr, "PNG", x, y, size, size);
+      } else {
+        doc.setDrawColor(74, 24, 122);
+        doc.setLineWidth(0.5);
+        doc.ellipse(x + size/2, y + size/2, size/2, size/2, "D");
+        doc.setFillColor(74, 24, 122);
+        doc.ellipse(x + size/2, y + size/2, size/2 - 1, size/2 - 1, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(8);
+        doc.text("IPSI", x + size/2, y + size/2 + 2.5, { align: "center" });
+      }
+    } catch (err) {
+      console.warn("Could not draw logo in PDF:", err);
+    }
   };
 
   const startEditBaganMatch = (m: any) => {
@@ -2909,7 +2855,7 @@ export function SekretarisPanel({
       }
     } catch (err) {
       console.error(err);
-      alert("Gagal menghubungi server database.");
+      alert("Gagal menghubungi server database localhost.");
     }
   };
 
@@ -2951,12 +2897,13 @@ export function SekretarisPanel({
       const matchedDefault = DEFAULT_SILAT_CLASSES.find(
         c => `cat-${c.name.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase()}` === classId
       );
+      const isSeni = manualKategori !== "TANDING";
       const catName = matchedDefault ? matchedDefault.name : classId.replace("cat-", "").replace("-", " ").toUpperCase();
       const divisionName = manualDivision || "DEWASA";
 
       const newCategoryObj = {
         id: classId,
-        name: catName,
+        name: isSeni ? `${manualKategori} - ${catName}` : catName,
         minWeight: matchedDefault ? matchedDefault.minWeight : 45,
         maxWeight: matchedDefault ? matchedDefault.maxWeight : 100,
         division: divisionName
@@ -6353,7 +6300,7 @@ export function SekretarisPanel({
     // Left block
     doc.text("Mengetahui,", 45, 172, { align: "center" });
     doc.setFont("Helvetica", "bold");
-    doc.text("Ketua Pertandingan,", 45, 176, { align: "center" });
+    doc.text("Ketua Pertandingan Pencak Silat", 45, 176, { align: "center" });
     doc.line(15, 194, 75, 194);
     if (namaKetuaPertandingan) {
       doc.text(namaKetuaPertandingan.toUpperCase(), 45, 198, { align: "center" });
@@ -6368,7 +6315,7 @@ export function SekretarisPanel({
     doc.setFont("Helvetica", "normal");
     doc.text(`${placeStr.toUpperCase()}, ${dateStr.toUpperCase()}`, 235, 172, { align: "center" });
     doc.setFont("Helvetica", "bold");
-    doc.text("Sekretaris Pertandingan,", 235, 176, { align: "center" });
+    doc.text("Sekretaris Pertandingan", 235, 176, { align: "center" });
     doc.line(205, 194, 265, 194);
     if (namaSekretarisPertandingan) {
       doc.text(namaSekretarisPertandingan.toUpperCase(), 235, 198, { align: "center" });
@@ -7109,38 +7056,6 @@ export function SekretarisPanel({
             doc.text(`🔵 ${blueName.toUpperCase()} [${blueClub.toUpperCase()}]`, xPos + 3, yPos + 13);
           });
         }
-
-        // Tanda Tangan Ketua Pertandingan & Sekretaris Pertandingan + Tempat & Tanggal Dibuat
-        doc.setFont("Helvetica", "normal");
-        doc.setFontSize(8.5);
-        doc.setTextColor(0, 0, 0);
-        doc.setDrawColor(0, 0, 0);
-        doc.setLineWidth(0.3);
-
-        doc.text("Mengetahui,", 45, 180, { align: "center" });
-        doc.setFont("Helvetica", "bold");
-        doc.text("Ketua Pertandingan,", 45, 184, { align: "center" });
-        doc.line(15, 198, 75, 198);
-        if (namaKetuaPertandingan) {
-          doc.text(namaKetuaPertandingan.toUpperCase(), 45, 202, { align: "center" });
-        } else {
-          doc.setFont("Helvetica", "normal");
-          doc.text("(............................................................)", 45, 202, { align: "center" });
-        }
-
-        const dateStr = tanggalCetakDokumen || "01 JULI 2026";
-        const placeStr = namaDaerahCetak || "IDI RAYEUK";
-        doc.setFont("Helvetica", "normal");
-        doc.text(`${placeStr.toUpperCase()}, ${dateStr.toUpperCase()}`, 235, 180, { align: "center" });
-        doc.setFont("Helvetica", "bold");
-        doc.text("Sekretaris Pertandingan,", 235, 184, { align: "center" });
-        doc.line(205, 198, 265, 198);
-        if (namaSekretarisPertandingan) {
-          doc.text(namaSekretarisPertandingan.toUpperCase(), 235, 202, { align: "center" });
-        } else {
-          doc.setFont("Helvetica", "normal");
-          doc.text("(............................................................)", 235, 202, { align: "center" });
-        }
       });
 
       if (pageCount === 0) {
@@ -7589,7 +7504,6 @@ export function SekretarisPanel({
               <div className="bg-[#071330] p-1 rounded-xl border border-cyan-500/40 flex items-center gap-1 shadow-inner animate-fadeIn">
                 {[
                   { id: "INPUT", label: "Input data" },
-                  { id: "LOTING", label: "menu loting" },
                   { id: "BAGAN", label: "bagan braket" },
                   { id: "KONTROL", label: "kontrol partai" }
                 ].map((subItem) => {
@@ -7628,7 +7542,7 @@ export function SekretarisPanel({
         </header>
       )}
 
-      {/* 1. VIEW REGISTRASI DATA (BERISI 4 SUB-MENU: Input data, menu loting, bagan braket, kontrol partai) */}
+      {/* 1. VIEW REGISTRASI DATA (BERISI 3 SUB-MENU: Input data, bagan braket, kontrol partai) */}
       {activeTab === "REGISTRASI" && (
         <div className="w-full flex-grow flex flex-col animate-fadeIn">
           {/* Sub-Navigation Bar Terpadu */}
@@ -7643,7 +7557,6 @@ export function SekretarisPanel({
             <div className="bg-[#040a1c] p-1 rounded-xl border border-cyan-500/40 flex items-center gap-1 shadow-inner">
               {[
                 { id: "INPUT", label: "Input data", icon: Users },
-                { id: "LOTING", label: "menu loting", icon: Shuffle },
                 { id: "BAGAN", label: "bagan braket", icon: Trophy },
                 { id: "KONTROL", label: "kontrol partai", icon: Calendar }
               ].map((subItem) => {
@@ -7683,13 +7596,11 @@ export function SekretarisPanel({
             </button>
           </div>
 
-          {/* Sub-menu 1: Input Data (Formulir Pendaftaran & Tabel Atlet) */}
+          {/* Sub-menu 1: Input Data */}
           {registrasiActiveTab === "INPUT" && (
             <div className="w-full flex-grow animate-fadeIn">
               <LotingPanel 
                 onBack={onBack} 
-                initialSubView="PENDATAAN"
-                onOpenLoting={() => setRegistrasiActiveTab("LOTING")}
                 onOpenBracket={() => setRegistrasiActiveTab("BAGAN")}
                 onOpenJadwal={() => setRegistrasiActiveTab("KONTROL")}
                 hideBackHeader={true} 
@@ -7697,20 +7608,7 @@ export function SekretarisPanel({
             </div>
           )}
 
-          {/* Sub-menu 2: Menu Loting (Loting Undian Atlet & Edit Manual Data Partai) */}
-          {registrasiActiveTab === "LOTING" && (
-            <div className="w-full flex-grow animate-fadeIn">
-              <LotingPanel 
-                onBack={onBack} 
-                initialSubView="LOTING"
-                onOpenBracket={() => setRegistrasiActiveTab("BAGAN")}
-                onOpenJadwal={() => setRegistrasiActiveTab("KONTROL")}
-                hideBackHeader={true} 
-              />
-            </div>
-          )}
-
-          {/* Sub-menu 3: Bagan Braket */}
+          {/* Sub-menu 2: Bagan Braket */}
           {registrasiActiveTab === "BAGAN" && (
             <div className="w-full flex-grow animate-fadeIn">
               <BracketPanel 
@@ -7721,7 +7619,7 @@ export function SekretarisPanel({
             </div>
           )}
 
-          {/* Sub-menu 4: Kontrol Partai */}
+          {/* Sub-menu 3: Kontrol Partai */}
           {registrasiActiveTab === "KONTROL" && (
             <div className="w-full flex-grow animate-fadeIn">
               <JadwalPanel 
@@ -7777,30 +7675,11 @@ export function SekretarisPanel({
                   onClick={() => {
                     sound.playClick();
                     setActiveTab("REGISTRASI");
-                    setRegistrasiActiveTab("INPUT");
                   }}
                   className="px-3 py-1 rounded-md font-sans font-black text-[10.5px] sm:text-[11px] uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-slate-300 hover:text-white hover:bg-slate-850 border border-transparent"
                 >
                   <Layers className="w-3 h-3 text-cyan-300" />
                   <span>REGISTRASI DATA TURNAMEN & BAGAN</span>
-                </button>
-
-                {/* DIVIDER */}
-                <span className="text-amber-400/40 font-bold select-none px-0.5">|</span>
-
-                {/* TAB 3: MENU LOTING */}
-                <button
-                  type="button"
-                  id="nav-tab-menu-loting"
-                  onClick={() => {
-                    sound.playClick();
-                    setActiveTab("REGISTRASI");
-                    setRegistrasiActiveTab("LOTING");
-                  }}
-                  className="px-3 py-1 rounded-md font-sans font-black text-[10.5px] sm:text-[11px] uppercase tracking-wider transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-300 hover:text-amber-200 hover:bg-amber-950/40 border border-transparent"
-                >
-                  <Shuffle className="w-3 h-3 text-amber-400" />
-                  <span>MENU LOTING</span>
                 </button>
               </nav>
 
@@ -7822,15 +7701,7 @@ export function SekretarisPanel({
                   type="text"
                   value={eventName}
                   onFocus={() => setFocusedField("eventName")}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setEventName(val);
-                    try {
-                      localStorage.setItem("jrz_event_name", val);
-                      localStorage.setItem("sekretaris_eventName", val);
-                      window.dispatchEvent(new Event("jrz_parameters_updated"));
-                    } catch {}
-                  }}
+                  onChange={(e) => setEventName(e.target.value)}
                   onBlur={() => {
                     setFocusedField(null);
                     triggerAutoSave();
@@ -7852,11 +7723,7 @@ export function SekretarisPanel({
                     onChange={(e) => {
                       const val = e.target.value;
                       setTempatPelaksanaan(val);
-                      try {
-                        localStorage.setItem("sekretaris_tempatPelaksanaan", val);
-                        localStorage.setItem("jrz_tempat_pelaksanaan", val);
-                        window.dispatchEvent(new Event("jrz_parameters_updated"));
-                      } catch {}
+                      localStorage.setItem("sekretaris_tempatPelaksanaan", val);
                     }}
                     placeholder="PURA / GOR / DEWAN ARENA..."
                     className="w-full bg-[#03081a] border border-blue-900/80 focus:border-cyan-400 rounded-lg px-2.5 py-1 font-sans font-bold text-[10.5px] text-slate-100 placeholder-blue-300/20 focus:outline-none focus:border-cyan-400 transition-all uppercase shadow-inner"
@@ -7873,11 +7740,7 @@ export function SekretarisPanel({
                     onChange={(e) => {
                       const val = e.target.value;
                       setWaktuPelaksanaan(val);
-                      try {
-                        localStorage.setItem("sekretaris_waktuPelaksanaan", val);
-                        localStorage.setItem("jrz_waktu_pelaksanaan", val);
-                        window.dispatchEvent(new Event("jrz_parameters_updated"));
-                      } catch {}
+                      localStorage.setItem("sekretaris_waktuPelaksanaan", val);
                     }}
                     placeholder="Contoh: 12 - 15 JUNI 2026..."
                     className="w-full bg-[#03081a] border border-blue-900/80 focus:border-cyan-400 rounded-lg px-2.5 py-1 font-sans font-bold text-[10.5px] text-slate-100 placeholder-blue-300/20 focus:outline-none focus:border-cyan-400 transition-all uppercase shadow-inner"
@@ -8068,13 +7931,7 @@ export function SekretarisPanel({
                   </label>
                   <select
                     value={kategoriUsia}
-                    onChange={(e) => {
-                      const nextDiv = e.target.value;
-                      const nextThreshold: 20 | 30 =
-                        nextDiv === "USIA DINI" || nextDiv === "PRA-REMAJA" ? 20 : 30;
-                      setKategoriUsia(nextDiv);
-                      triggerAutoSave({ division: nextDiv, wmpThreshold: nextThreshold });
-                    }}
+                    onChange={(e) => { setKategoriUsia(e.target.value); triggerAutoSave(); }}
                     className="w-full bg-[#03081a] border border-blue-900/80 focus:border-cyan-400 rounded-lg px-1.5 py-1 font-sans font-black text-center text-[10.5px] text-slate-100 focus:outline-none shadow-inner uppercase"
                   >
                     <option value="DEWASA">DEWASA</option>
@@ -8082,85 +7939,6 @@ export function SekretarisPanel({
                     <option value="PRA-REMAJA">PRA REMAJA</option>
                     <option value="USIA DINI">USIA DINI</option>
                   </select>
-                </div>
-              </div>
-
-              {/* KONFIGURASI LOGIKA ATURAN WMP (WIN BY MATCH POINTS) Row */}
-              <div className="bg-[#03091e]/90 border border-amber-500/40 rounded-xl p-2 flex flex-col gap-1.5 shadow-inner">
-                <div className="flex flex-wrap items-center justify-between gap-1">
-                  <label className="text-[8.5px] uppercase font-sans font-black tracking-widest text-amber-300 flex items-center gap-1.5">
-                    <span>⚡ LOGIKA ATURAN WMP (WIN BY MATCH POINTS - BABAK II & III / 60S)</span>
-                  </label>
-                  <span className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[8.5px] font-mono font-black uppercase">
-                    {(state?.wmpThreshold === 20 || (state?.wmpThreshold !== 30 && (kategoriUsia === "USIA DINI" || kategoriUsia === "PRA-REMAJA")))
-                      ? "AKTIF: USIA DINI / PRA-REMAJA (20 POIN)"
-                      : "AKTIF: REMAJA / DEWASA (30 POIN)"}
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 items-center">
-                  {/* Dropdown WMP */}
-                  <select
-                    id="sekretaris-wmp-threshold-dropdown"
-                    value={
-                      state?.wmpThreshold === 20 || (state?.wmpThreshold !== 30 && (kategoriUsia === "USIA DINI" || kategoriUsia === "PRA-REMAJA"))
-                        ? 20
-                        : 30
-                    }
-                    onChange={(e) => {
-                      const nextThresh = Number(e.target.value) === 20 ? 20 : 30;
-                      const nextDiv =
-                        nextThresh === 20
-                          ? (kategoriUsia === "USIA DINI" || kategoriUsia === "PRA-REMAJA" ? kategoriUsia : "PRA-REMAJA")
-                          : (kategoriUsia === "REMAJA" || kategoriUsia === "DEWASA" ? kategoriUsia : "DEWASA");
-                      setKategoriUsia(nextDiv);
-                      triggerAutoSave({ wmpThreshold: nextThresh, division: nextDiv });
-                      notifyToast(
-                        nextThresh === 30
-                          ? "Aturan WMP diubah ke Remaja/Dewasa (Selisih 30 Poin)"
-                          : "Aturan WMP diubah ke Usia Dini/Pra-Remaja (Selisih 20 Poin)"
-                      );
-                    }}
-                    className="w-full bg-[#03081a] border border-amber-500/50 focus:border-amber-400 rounded-lg px-2 py-1.5 font-sans font-black text-[10px] text-amber-200 focus:outline-none uppercase shadow-inner cursor-pointer"
-                  >
-                    <option value={30}>REMAJA / DEWASA — BATAS SELISIH 30 POIN (60 DETIK)</option>
-                    <option value={20}>USIA DINI / PRA-REMAJA — BATAS SELISIH 20 POIN (60 DETIK)</option>
-                  </select>
-
-                  {/* Toggle Switch Buttons WMP */}
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextDiv = kategoriUsia === "REMAJA" || kategoriUsia === "DEWASA" ? kategoriUsia : "DEWASA";
-                        setKategoriUsia(nextDiv);
-                        triggerAutoSave({ wmpThreshold: 30, division: nextDiv });
-                        notifyToast("Aturan WMP: Remaja/Dewasa (30 Poin)");
-                      }}
-                      className={`py-1.5 px-2 rounded-lg font-sans font-black text-[9.5px] uppercase transition-all tracking-wider cursor-pointer ${
-                        !(state?.wmpThreshold === 20 || (state?.wmpThreshold !== 30 && (kategoriUsia === "USIA DINI" || kategoriUsia === "PRA-REMAJA")))
-                          ? "bg-gradient-to-r from-amber-500 to-orange-600 text-slate-950 shadow-[0_0_12px_rgba(245,158,11,0.45)] border border-amber-300"
-                          : "bg-[#03081a] hover:bg-[#091538] text-slate-400 border border-blue-950"
-                      }`}
-                    >
-                      Remaja/Dewasa (30P)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextDiv = kategoriUsia === "USIA DINI" || kategoriUsia === "PRA-REMAJA" ? kategoriUsia : "PRA-REMAJA";
-                        setKategoriUsia(nextDiv);
-                        triggerAutoSave({ wmpThreshold: 20, division: nextDiv });
-                        notifyToast("Aturan WMP: Usia Dini/Pra-Remaja (20 Poin)");
-                      }}
-                      className={`py-1.5 px-2 rounded-lg font-sans font-black text-[9.5px] uppercase transition-all tracking-wider cursor-pointer ${
-                        (state?.wmpThreshold === 20 || (state?.wmpThreshold !== 30 && (kategoriUsia === "USIA DINI" || kategoriUsia === "PRA-REMAJA")))
-                          ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 shadow-[0_0_12px_rgba(6,182,212,0.45)] border border-cyan-300"
-                          : "bg-[#03081a] hover:bg-[#091538] text-slate-400 border border-blue-950"
-                      }`}
-                    >
-                      Usia Dini/Pra-Remaja (20P)
-                    </button>
-                  </div>
                 </div>
               </div>
 
@@ -8924,7 +8702,7 @@ export function SekretarisPanel({
                     INTEGRASI & INPUT DATA ATLIT TURNAMEN
                   </h3>
                   <p className="text-[9px] text-[#8c62ff]/65 uppercase font-bold tracking-wider m-0 mt-1.5">
-                    OVERLAY PENYINKRONISASI EXCEL & MANUAL INPUT KE DATABASE
+                    OVERLAY PENYINKRONISASI EXCEL & MANUAL INPUT KE DATABASE LOCALHOST
                   </p>
                 </div>
               </div>
@@ -9040,6 +8818,10 @@ export function SekretarisPanel({
                         className="bg-[#180935] border border-purple-900/60 text-slate-200 rounded-xl px-1.5 py-1.5 text-[10.5px] font-bold focus:outline-none focus:border-purple-500 cursor-pointer"
                       >
                         <option value="TANDING">TANDING</option>
+                        <option value="SENI TUNGGAL">SENI TUNGGAL</option>
+                        <option value="SENI GANDA">SENI GANDA</option>
+                        <option value="SENI REGU">SENI REGU</option>
+                        <option value="SOLO KREATIF">SOLO KREATIF</option>
                       </select>
                     </div>
 

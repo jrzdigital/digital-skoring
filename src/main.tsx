@@ -9,6 +9,8 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
     import.meta.env.DEV ||
     window.location.hostname.includes('run.app') ||
     window.location.hostname.includes('github.io') ||
+    window.location.hostname.includes('web.app') ||
+    window.location.hostname.includes('firebaseapp.com') ||
     window.location.hostname.includes('localhost') ||
     window.location.hostname.includes('127.0.0.1')
   ) {

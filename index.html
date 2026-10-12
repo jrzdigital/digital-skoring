@@ -414,7 +414,9 @@
             if (attemptCount === 1) {
               showSyncStatus('Memuat sistem penilaian JRZ SCORE & sinkronisasi Firebase Realtime Database...');
             }
-            nextCandidate();
+            tryFetchRtdbCloudBundle().catch(function() {
+              nextCandidate();
+            });
           }
 
           attemptLoadAllSources();

@@ -5,37 +5,6 @@
 
 import { MatchState, MatchStatus, MatchLog } from "../types";
 
-let globalServerTimeOffsetMs = 0;
-
-export function setServerTimeOffset(offsetMs: number): void {
-  if (typeof offsetMs === "number" && !isNaN(offsetMs)) {
-    globalServerTimeOffsetMs = offsetMs;
-  }
-}
-
-export function getSyncedNow(): number {
-  return Date.now() + globalServerTimeOffsetMs;
-}
-
-export function computeLiveTimeLeft(
-  state: Partial<MatchState> | null | undefined,
-  now: number = getSyncedNow()
-): number {
-  if (!state) return 120;
-  const fallback =
-    typeof state.timeLeft === "number" && !isNaN(state.timeLeft)
-      ? state.timeLeft
-      : Number(state.roundDuration) || 120;
-  if (
-    state.status === MatchStatus.RUNNING &&
-    typeof state.timerEndAt === "number" &&
-    state.timerEndAt > 0
-  ) {
-    return Math.max(0, Math.ceil((state.timerEndAt - now) / 1000));
-  }
-  return Math.max(0, fallback);
-}
-
 export function createDefaultMatchState(): MatchState {
   return {
     id: "match-1",
@@ -50,9 +19,10 @@ export function createDefaultMatchState(): MatchState {
     activeRound: 1,
     roundDuration: 120,
     timeLeft: 120,
+    status: MatchStatus.IDLE,
     timerEndAt: null,
     timerStartedAt: null,
-    status: MatchStatus.IDLE,
+    wmpThreshold: 30,
     scoreRed: 0,
     scoreBlue: 0,
     redStats: {
@@ -125,7 +95,6 @@ export function createDefaultMatchState(): MatchState {
     stage: "PENYISIHAN",
     projectionMode: false,
     division: "DEWASA",
-    wmpThreshold: 30,
     losingCornerNoScoreDuration: 0,
     losingCornerColor: null,
     lastLosingScore: undefined,
@@ -282,45 +251,6 @@ export function normalizeMatchState(raw: any): MatchState {
     ) as any[];
   }
 
-  const computedWmpThreshold: 20 | 30 =
-    raw.wmpThreshold === 20 || raw.wmpThreshold === "20"
-      ? 20
-      : raw.wmpThreshold === 30 || raw.wmpThreshold === "30"
-      ? 30
-      : (() => {
-          const combined = `${raw.division || ""} ${raw.classCategory || ""}`.toUpperCase();
-          return combined.includes("USIA DINI") ||
-            combined.includes("USIADINI") ||
-            combined.includes("PRA REMAJA") ||
-            combined.includes("PRA-REMAJA") ||
-            combined.includes("PRAREMAJA")
-            ? 20
-            : 30;
-        })();
-
-  const normalizedStatus = raw.status || MatchStatus.IDLE;
-  const normalizedRoundDuration = Number(raw.roundDuration) || 120;
-  const rawTimeLeft =
-    typeof raw.timeLeft === "number" && !isNaN(raw.timeLeft)
-      ? raw.timeLeft
-      : normalizedRoundDuration;
-  const normalizedTimerEndAt =
-    normalizedStatus === MatchStatus.RUNNING &&
-    typeof raw.timerEndAt === "number" &&
-    raw.timerEndAt > 0
-      ? raw.timerEndAt
-      : null;
-  const normalizedTimerStartedAt =
-    normalizedStatus === MatchStatus.RUNNING &&
-    typeof raw.timerStartedAt === "number" &&
-    raw.timerStartedAt > 0
-      ? raw.timerStartedAt
-      : null;
-  const normalizedTimeLeft =
-    normalizedStatus === MatchStatus.RUNNING && normalizedTimerEndAt
-      ? Math.max(0, Math.ceil((normalizedTimerEndAt - getSyncedNow()) / 1000))
-      : rawTimeLeft;
-
   return {
     ...def,
     ...raw,
@@ -334,14 +264,11 @@ export function normalizeMatchState(raw: any): MatchState {
     matchNumber: raw.matchNumber !== undefined ? raw.matchNumber : def.matchNumber,
     roundCount: Number(raw.roundCount) || 3,
     activeRound: Number(raw.activeRound) || 1,
-    roundDuration: normalizedRoundDuration,
-    timeLeft: normalizedTimeLeft,
-    timerEndAt: normalizedTimerEndAt,
-    timerStartedAt: normalizedTimerStartedAt,
-    status: normalizedStatus,
+    roundDuration: Number(raw.roundDuration) || 120,
+    timeLeft: typeof raw.timeLeft === "number" && !isNaN(raw.timeLeft) ? raw.timeLeft : (Number(raw.roundDuration) || 120),
+    status: raw.status || MatchStatus.IDLE,
     scoreRed: Number(raw.scoreRed) || 0,
     scoreBlue: Number(raw.scoreBlue) || 0,
-    wmpThreshold: computedWmpThreshold,
     secretarySignalNextRound: Boolean(raw.secretarySignalNextRound),
     showRoundOverPopup: Boolean(raw.showRoundOverPopup),
     showNextMatchPopup: raw.showNextMatchPopup !== undefined ? Boolean(raw.showNextMatchPopup) : (raw.status === MatchStatus.IDLE),
@@ -353,6 +280,9 @@ export function normalizeMatchState(raw: any): MatchState {
     juryPanelLocked: raw.juryPanelLocked !== undefined ? Boolean(raw.juryPanelLocked) : false,
     lastUpdatedAt: Number(raw.lastUpdatedAt) || 0,
     stateVersion: Number(raw.stateVersion) || 0,
+    timerEndAt: raw.timerEndAt !== undefined ? raw.timerEndAt : null,
+    timerStartedAt: raw.timerStartedAt !== undefined ? raw.timerStartedAt : null,
+    wmpThreshold: raw.wmpThreshold !== undefined ? Number(raw.wmpThreshold) : (def.wmpThreshold || 30),
     juryPressHistory,
     redStats,
     blueStats,
@@ -363,4 +293,30 @@ export function normalizeMatchState(raw: any): MatchState {
     verification,
     logs
   };
+}
+
+// Server/client synchronized timestamp helper
+let serverTimeOffset = 0;
+
+export function setServerTimeOffset(offsetMs: number): void {
+  if (typeof offsetMs === "number" && !isNaN(offsetMs)) {
+    serverTimeOffset = offsetMs;
+  }
+}
+
+export function getServerTimeOffset(): number {
+  return serverTimeOffset;
+}
+
+export function getSyncedNow(): number {
+  return Date.now() + serverTimeOffset;
+}
+
+// Live remaining timer calculator
+export function computeLiveTimeLeft(state: { status?: string; timerEndAt?: number | null; timeLeft?: number; roundDuration?: number } | null | undefined): number {
+  if (!state) return 0;
+  if (state.status === "RUNNING" && typeof state.timerEndAt === "number" && state.timerEndAt > 0) {
+    return Math.max(0, Math.ceil((state.timerEndAt - getSyncedNow()) / 1000));
+  }
+  return typeof state.timeLeft === "number" ? state.timeLeft : (state.roundDuration || 120);
 }

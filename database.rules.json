@@ -8,6 +8,10 @@
           ".read": true,
           ".write": true
         },
+        "activeJuryPresses": {
+          ".read": true,
+          ".write": true
+        },
         "presence": {
           ".read": true,
           ".write": true
@@ -15,18 +19,14 @@
         "schedule": {
           ".read": true,
           ".write": true
-        },
-        "activeJuryPresses": {
-          ".read": true,
-          ".write": true
         }
       }
     },
-    "appStorage": {
+    "activeMatch": {
       ".read": true,
       ".write": true
     },
-    "activeMatch": {
+    "activeJuryPresses": {
       ".read": true,
       ".write": true
     },

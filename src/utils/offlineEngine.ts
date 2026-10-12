@@ -4,7 +4,7 @@
  */
 
 import { MatchState, MatchStatus, FighterColor, ActionType, MatchLog } from "../types";
-import { normalizeMatchState, getSyncedNow, computeLiveTimeLeft } from "./defaultMatchState";
+import { normalizeMatchState } from "./defaultMatchState";
 import { sound } from "./sound";
 import { autoSaveVault } from "./offlineAutoSaveVault";
 
@@ -223,17 +223,11 @@ class OfflineScoringEngine {
   }
 
   public stampStateMutation(state: MatchState, prevState?: MatchState): MatchState {
-    const now = getSyncedNow();
+    const now = Date.now();
     const prevTime = Number(prevState?.lastUpdatedAt || state.lastUpdatedAt) || 0;
     const prevVersion = Number(prevState?.stateVersion || state.stateVersion) || 0;
     state.lastUpdatedAt = Math.max(now, prevTime + 1);
     state.stateVersion = prevVersion + 1;
-    if (state.status !== MatchStatus.RUNNING) {
-      state.timerEndAt = null;
-      state.timerStartedAt = null;
-    } else if (typeof state.timerEndAt === "number" && state.timerEndAt > 0) {
-      state.timeLeft = Math.max(0, Math.ceil((state.timerEndAt - now) / 1000));
-    }
     return state;
   }
 
@@ -462,57 +456,18 @@ class OfflineScoringEngine {
       };
     }
 
-    // Otherwise, remote state is accepted, with wall-clock timerEndAt reconciliation so all refreshed panels stay 100% synchronized
-    const syncedNow = getSyncedNow();
+    // Otherwise, remote state is accepted, with smooth running timer protection so the clock never jumps backwards
     let reconciledTimeLeft = remote.timeLeft;
-    let reconciledTimerEndAt: number | null =
-      remote.status === MatchStatus.RUNNING && typeof remote.timerEndAt === "number" && remote.timerEndAt > 0
-        ? remote.timerEndAt
-        : null;
-    let reconciledTimerStartedAt: number | null =
-      remote.status === MatchStatus.RUNNING && typeof remote.timerStartedAt === "number" && remote.timerStartedAt > 0
-        ? remote.timerStartedAt
-        : null;
-
-    if (
-      local.status === MatchStatus.RUNNING &&
-      remote.status === MatchStatus.RUNNING &&
-      local.activeRound === remote.activeRound
-    ) {
-      const localHasEndAt = typeof local.timerEndAt === "number" && local.timerEndAt > 0;
-      const remoteHasEndAt = typeof remote.timerEndAt === "number" && remote.timerEndAt > 0;
-
-      if (localHasEndAt && remoteHasEndAt) {
-        const localStart = Number(local.timerStartedAt) || localUpdated;
-        const remoteStart = Number(remote.timerStartedAt) || remoteUpdated;
-        if (localStart > remoteStart + 500) {
-          reconciledTimerEndAt = local.timerEndAt!;
-          reconciledTimerStartedAt = local.timerStartedAt || localStart;
-        } else {
-          reconciledTimerEndAt = remote.timerEndAt!;
-          reconciledTimerStartedAt = remote.timerStartedAt || remoteStart;
-        }
-        reconciledTimeLeft = Math.max(0, Math.ceil((reconciledTimerEndAt - syncedNow) / 1000));
-      } else if (remoteHasEndAt) {
-        reconciledTimerEndAt = remote.timerEndAt!;
-        reconciledTimerStartedAt = remote.timerStartedAt || remoteUpdated || syncedNow;
-        reconciledTimeLeft = Math.max(0, Math.ceil((reconciledTimerEndAt - syncedNow) / 1000));
-      } else if (localHasEndAt) {
-        reconciledTimerEndAt = local.timerEndAt!;
-        reconciledTimerStartedAt = local.timerStartedAt || localUpdated || syncedNow;
-        reconciledTimeLeft = Math.max(0, Math.ceil((reconciledTimerEndAt - syncedNow) / 1000));
-      } else {
-        reconciledTimeLeft = Math.min(local.timeLeft, remote.timeLeft);
-        reconciledTimerStartedAt = syncedNow;
-        reconciledTimerEndAt = syncedNow + reconciledTimeLeft * 1000;
+    if (local.status === MatchStatus.RUNNING && remote.status === MatchStatus.RUNNING) {
+      const timeDiff = Math.abs(local.timeLeft - remote.timeLeft);
+      if (timeDiff <= 1) {
+        reconciledTimeLeft = local.timeLeft;
       }
     }
 
     const candidateMerged: MatchState = {
       ...remote,
       timeLeft: reconciledTimeLeft,
-      timerEndAt: remote.status === MatchStatus.RUNNING ? reconciledTimerEndAt : null,
-      timerStartedAt: remote.status === MatchStatus.RUNNING ? reconciledTimerStartedAt : null,
       activeJuryPresses: mergedPresses,
       juryPressHistory: mergedHistory
     };
@@ -910,95 +865,61 @@ class OfflineScoringEngine {
     const r = newState.activeRound;
     const now = Date.now();
 
-    const isMatchingJuryScoreLog = (log: MatchLog) =>
-      (log.type === "PUNCH" || log.type === "KICK") &&
-      (!fighter || log.fighter === fighter) &&
-      (log.uncounted ? log.source === `Juri ${jId}` : Boolean(log.juryIds && log.juryIds.includes(jId)));
-
-    let logIndex = (newState.logs || []).findIndex(
-      (log) => log.round === r && isMatchingJuryScoreLog(log)
+    const logIndex = (newState.logs || []).findIndex(
+      (log) =>
+        log.round === r &&
+        (!fighter || log.fighter === fighter) &&
+        (log.source === `Juri ${jId}` || (log.juryIds && log.juryIds.includes(jId)))
     );
-    if (logIndex === -1) {
-      logIndex = (newState.logs || []).findIndex((log) => isMatchingJuryScoreLog(log));
-    }
-
-    if (newState.activeJuryPresses && newState.activeJuryPresses[jId]) {
-      newState.activeJuryPresses[jId] = null;
-    }
-    if (Array.isArray(newState.juryPressHistory)) {
-      newState.juryPressHistory = newState.juryPressHistory.filter((p) => p.juryId !== jId);
-    }
-    this.juryPressHistory = this.juryPressHistory.filter((p) => p.juryId !== jId);
 
     if (logIndex !== -1) {
       const log = newState.logs[logIndex];
-      const targetFighter = log.fighter;
-      const targetRound = log.round;
+      const targetFighter: FighterColor = log.fighter;
       const fLabel = targetFighter === "RED" ? "Merah" : "Biru";
       const pointValue = log.points;
 
       if (!log.uncounted && log.juryIds && log.juryIds.includes(jId)) {
-        const remainingJuries = log.juryIds.filter((id) => id !== jId);
-
-        if (remainingJuries.length >= 2) {
-          if (newState.juryScores?.[jId]?.[targetRound]) {
+        log.juryIds.forEach((id) => {
+          if (newState.juryScores?.[id]?.[r]) {
             if (targetFighter === "RED") {
-              newState.juryScores[jId][targetRound].red = Math.max(0, newState.juryScores[jId][targetRound].red - pointValue);
+              newState.juryScores[id][r].red = Math.max(0, newState.juryScores[id][r].red - pointValue);
             } else {
-              newState.juryScores[jId][targetRound].blue = Math.max(0, newState.juryScores[jId][targetRound].blue - pointValue);
+              newState.juryScores[id][r].blue = Math.max(0, newState.juryScores[id][r].blue - pointValue);
             }
           }
-          log.juryIds = remainingJuries;
-          log.source = `Konsensus Juri (J${remainingJuries.join(", J")})`;
-          log.description = `NILAI MASUK: Juri ${remainingJuries.join(" & ")} setuju +${pointValue} Poin ${log.type === "PUNCH" ? "Pukulan" : "Tendangan"} ${fLabel} (Konsensus <=2 Detik)!`;
+        });
+
+        if (targetFighter === "RED") {
+          if (log.type === "PUNCH") {
+            newState.redStats.punches = Math.max(0, (newState.redStats.punches || 0) - 1);
+          } else {
+            newState.redStats.kicks = Math.max(0, (newState.redStats.kicks || 0) - 1);
+          }
         } else {
-          log.juryIds.forEach((id) => {
-            if (newState.juryScores?.[id]?.[targetRound]) {
-              if (targetFighter === "RED") {
-                newState.juryScores[id][targetRound].red = Math.max(0, newState.juryScores[id][targetRound].red - pointValue);
-              } else {
-                newState.juryScores[id][targetRound].blue = Math.max(0, newState.juryScores[id][targetRound].blue - pointValue);
-              }
-            }
-          });
-
-          if (targetFighter === "RED") {
-            if (log.type === "PUNCH") {
-              newState.redStats.punches = Math.max(0, (newState.redStats.punches || 0) - 1);
-            } else {
-              newState.redStats.kicks = Math.max(0, (newState.redStats.kicks || 0) - 1);
-            }
+          if (log.type === "PUNCH") {
+            newState.blueStats.punches = Math.max(0, (newState.blueStats.punches || 0) - 1);
           } else {
-            if (log.type === "PUNCH") {
-              newState.blueStats.punches = Math.max(0, (newState.blueStats.punches || 0) - 1);
-            } else {
-              newState.blueStats.kicks = Math.max(0, (newState.blueStats.kicks || 0) - 1);
-            }
+            newState.blueStats.kicks = Math.max(0, (newState.blueStats.kicks || 0) - 1);
           }
-
-          if (remainingJuries.length === 1) {
-            const remId = remainingJuries[0];
-            log.uncounted = true;
-            log.source = `Juri ${remId}`;
-            delete log.juryIds;
-            log.description = `PERCOBAAN POIN: Juri ${remId} menekan ${log.type === "PUNCH" ? "Pukulan" : "Tendangan"} ${fLabel} (Menunggu Konsensus <= 2 Detik)`;
-          } else {
-            newState.logs.splice(logIndex, 1);
-          }
-
-          newState.logs.unshift({
-            id: Math.random().toString(36).substring(7),
-            timestamp: now,
-            round: targetRound,
-            fighter: targetFighter,
-            description: `BATAL POIN: Poin ${log.type === "PUNCH" ? "Pukulan" : "Tendangan"} ${fLabel} dibatalkan oleh Juri ${jId}.`,
-            points: -pointValue,
-            source: `Juri ${jId}`,
-            type: "SYSTEM"
-          });
         }
-      } else {
-        newState.logs.splice(logIndex, 1);
+
+        newState.logs.unshift({
+          id: Math.random().toString(36).substring(7),
+          timestamp: now,
+          round: r,
+          fighter: targetFighter,
+          description: `BATAL POIN: Poin ${log.type === "PUNCH" ? "Pukulan" : "Tendangan"} ${fLabel} dibatalkan oleh Juri ${jId}.`,
+          points: -pointValue,
+          source: `Juri ${jId}`,
+          type: "SYSTEM"
+        });
+      }
+
+      const finalLogIndex = newState.logs.findIndex(
+        (l, idx) => idx >= (!log.uncounted && log.juryIds && log.juryIds.includes(jId) ? 1 : 0) && l.id === log.id
+      );
+      if (finalLogIndex !== -1) {
+        newState.logs.splice(finalLogIndex, 1);
       }
 
       this.recalculateScores(newState);
@@ -1007,6 +928,21 @@ class OfflineScoringEngine {
     }
 
     return newState;
+  }
+
+  // WMP Point Threshold Getter (30 points for Remaja/Dewasa, 20 points for Usia Dini/Pra-Remaja)
+  public getWmpPointThreshold(state?: Partial<MatchState> | null): 20 | 30 {
+    if (!state) return 30;
+    if (Number(state.wmpThreshold) === 20) return 20;
+    if (Number(state.wmpThreshold) === 30) return 30;
+    const combined = `${state.division || ""} ${state.classCategory || ""}`.toUpperCase();
+    const isUsiaDiniOrPraRemaja =
+      combined.includes("USIA DINI") ||
+      combined.includes("USIADINI") ||
+      combined.includes("PRA REMAJA") ||
+      combined.includes("PRA-REMAJA") ||
+      combined.includes("PRAREMAJA");
+    return isUsiaDiniOrPraRemaja ? 20 : 30;
   }
 
   // Compile Jury Press Statistics for Match Recap & Archive
@@ -1210,19 +1146,13 @@ class OfflineScoringEngine {
 
   // Pure Client-Side 1-Second Timer Tick (Includes 30-point gap rule in Round 2, Jury Indicator Cleanup, Round End, & Tie-Breaker)
   public processOfflineTimerTick(currentState: MatchState): MatchState {
-    if (!currentState || currentState.status !== MatchStatus.RUNNING) {
+    if (!currentState || currentState.status !== MatchStatus.RUNNING || currentState.timeLeft <= 0) {
       return currentState;
     }
 
     const nextState: MatchState = JSON.parse(JSON.stringify(currentState));
-    const now = getSyncedNow();
-    if (typeof nextState.timerEndAt === "number" && nextState.timerEndAt > 0) {
-      nextState.timeLeft = Math.max(0, Math.ceil((nextState.timerEndAt - now) / 1000));
-    } else {
-      nextState.timeLeft = Math.max(0, (nextState.timeLeft || 0) - 1);
-      nextState.timerStartedAt = now;
-      nextState.timerEndAt = now + nextState.timeLeft * 1000;
-    }
+    const now = Date.now();
+    nextState.timeLeft = Math.max(0, nextState.timeLeft - 1);
 
     // Clean up expired visual jury press indicators (> 2000ms)
     if (nextState.activeJuryPresses) {
@@ -1237,72 +1167,81 @@ class OfflineScoringEngine {
     // Evaluate jury consensus if any presses arrived across network snapshots
     this.evaluateAndApplyConsensus(nextState, now);
 
-    // Check IPSI 2026 WMP point gap rule in Round II or III (20 points for Usia Dini/Pra-Remaja, 30 points for Remaja/Dewasa) for 1 minute (60s)
-    const wmpThreshold = this.getWmpPointThreshold(nextState);
-    if (nextState.activeRound === 2 || nextState.activeRound === 3) {
-      const scoreDiff = Math.abs(nextState.scoreRed - nextState.scoreBlue);
-      if (scoreDiff >= wmpThreshold) {
-        const currentLosingColor = nextState.scoreRed > nextState.scoreBlue ? "BLUE" : "RED";
-        const currentLosingScore = currentLosingColor === "BLUE" ? nextState.scoreBlue : nextState.scoreRed;
+    // Check IPSI 2026 30-point gap rule in Round 2 for Remaja/Dewasa while time > 0
+    if (nextState.timeLeft > 0) {
+      const isRemajaOrDewasa =
+        nextState.division?.toUpperCase() === "REMAJA" ||
+        nextState.division?.toUpperCase() === "DEWASA" ||
+        nextState.classCategory?.toUpperCase().includes("REMAJA") ||
+        nextState.classCategory?.toUpperCase().includes("DEWASA");
 
-        if (nextState.losingCornerColor === currentLosingColor) {
-          nextState.losingCornerNoScoreDuration = (nextState.losingCornerNoScoreDuration || 0) + 1;
-          nextState.lastLosingScore = currentLosingScore;
+      if (nextState.activeRound === 2 && isRemajaOrDewasa) {
+        const scoreDiff = Math.abs(nextState.scoreRed - nextState.scoreBlue);
+        if (scoreDiff >= 30) {
+          const currentLosingColor = nextState.scoreRed > nextState.scoreBlue ? "BLUE" : "RED";
+          const currentLosingScore = currentLosingColor === "BLUE" ? nextState.scoreBlue : nextState.scoreRed;
+
+          if (nextState.losingCornerColor === currentLosingColor) {
+            if (currentLosingScore > (nextState.lastLosingScore ?? currentLosingScore)) {
+              nextState.losingCornerNoScoreDuration = 0;
+              nextState.lastLosingScore = currentLosingScore;
+            } else {
+              nextState.losingCornerNoScoreDuration = (nextState.losingCornerNoScoreDuration || 0) + 1;
+              nextState.lastLosingScore = currentLosingScore;
+            }
+          } else {
+            nextState.losingCornerColor = currentLosingColor;
+            nextState.lastLosingScore = currentLosingScore;
+            nextState.losingCornerNoScoreDuration = 0;
+          }
+
+          if ((nextState.losingCornerNoScoreDuration || 0) >= 60) {
+            const winnerColor = currentLosingColor === "BLUE" ? "RED" : "BLUE";
+            const winnerName = winnerColor === "RED" ? nextState.fighterRedName : nextState.fighterBlueName;
+
+            nextState.status = MatchStatus.FINISHED;
+            nextState.winnerColor = winnerColor;
+            nextState.winnerMethod = "MENANG MUTLAK (SELISIH 30 POIN & 1 MENIT TANPA BALASAN)";
+            nextState.winnerPublished = true;
+            nextState.dewanPanelLocked = true;
+            nextState.juryPanelLocked = true;
+            nextState.juryPressStats = this.compileJuryPressStats(nextState.logs);
+
+            nextState.logs.unshift({
+              id: Math.random().toString(36).substring(7),
+              timestamp: now,
+              round: nextState.activeRound,
+              fighter: winnerColor,
+              description: `KEMENANGAN MUTLAK! ${winnerName} menang karena selisih skor >= 30 poin di babak kedua dan selama 1 menit tidak ada penambahan nilai dari sudut ${currentLosingColor === "BLUE" ? "Biru" : "Merah"}.`,
+              points: 0,
+              source: "Sistem",
+              type: "SYSTEM"
+            });
+
+            sound.playBuzzer();
+            this.archiveFinishedMatchOffline(nextState);
+            this.stampStateMutation(nextState, currentState);
+            this.broadcast(nextState);
+            return nextState;
+          }
         } else {
-          nextState.losingCornerColor = currentLosingColor;
-          nextState.lastLosingScore = currentLosingScore;
-          nextState.losingCornerNoScoreDuration = 1;
-        }
-
-        if ((nextState.losingCornerNoScoreDuration || 0) >= 60) {
-          const winnerColor = nextState.scoreRed > nextState.scoreBlue ? "RED" : "BLUE";
-          const winnerName = winnerColor === "RED" ? nextState.fighterRedName : nextState.fighterBlueName;
-          const categoryLabel = wmpThreshold === 20 ? "Usia Dini / Pra-Remaja" : "Remaja / Dewasa";
-
-          nextState.status = MatchStatus.FINISHED;
-          nextState.winnerColor = winnerColor;
-          nextState.winnerMethod = `MENANG WMP (SELISIH ${wmpThreshold} POIN SELAMA 60 DETIK)`;
-          nextState.winnerPublished = true;
-          nextState.dewanPanelLocked = true;
-          nextState.juryPanelLocked = true;
-          nextState.juryPressStats = this.compileJuryPressStats(nextState.logs);
-
-          nextState.logs.unshift({
-            id: Math.random().toString(36).substring(7),
-            timestamp: now,
-            round: nextState.activeRound,
-            fighter: winnerColor,
-            description: `MENANG WMP! Wasit menghentikan pertandingan pada Babak ${nextState.activeRound === 2 ? "II" : "III"} karena selisih nilai mencapai >= ${wmpThreshold} poin (${categoryLabel}) antara sudut Merah dan Biru selama 1 menit (60 S). Pemenang: ${winnerName} (Sudut ${winnerColor === "RED" ? "Merah" : "Biru"}).`,
-            points: 0,
-            source: "Wasit / Sistem WMP",
-            type: "SYSTEM"
-          });
-
-          sound.playBuzzer();
-          this.archiveFinishedMatchOffline(nextState);
-          this.stampStateMutation(nextState, currentState);
-          this.broadcast(nextState);
-          return nextState;
+          nextState.losingCornerColor = null;
+          nextState.lastLosingScore = undefined;
+          nextState.losingCornerNoScoreDuration = 0;
         }
       } else {
         nextState.losingCornerColor = null;
         nextState.lastLosingScore = undefined;
         nextState.losingCornerNoScoreDuration = 0;
       }
-    } else {
-      nextState.losingCornerColor = null;
-      nextState.lastLosingScore = undefined;
-      nextState.losingCornerNoScoreDuration = 0;
-    }
 
-    if (nextState.timeLeft > 0) {
       this.stampStateMutation(nextState, currentState);
       this.broadcast(nextState, true);
       return nextState;
     }
 
-    // Time reached 00:00 -> Round End or Match Finish! (Babak selesai)
-    sound.playGong();
+    // Time reached 00:00 -> Round End or Match Finish!
+    sound.playBuzzer();
     const roundCount = nextState.roundCount || 3;
     const isFinalRound = nextState.activeRound >= roundCount;
 
@@ -1421,44 +1360,6 @@ class OfflineScoringEngine {
     }
     state.blueStats.warnings = bluePenaltyDeductions;
     state.scoreBlue = bluePositive - bluePenaltyDeductions;
-
-    // Immediately evaluate WMP point gap tracking on score changes in Babak II or III
-    if (state.activeRound === 2 || state.activeRound === 3) {
-      const wmpThreshold = this.getWmpPointThreshold(state);
-      const scoreDiff = Math.abs(state.scoreRed - state.scoreBlue);
-      if (scoreDiff >= wmpThreshold) {
-        const currentLosingColor = state.scoreRed > state.scoreBlue ? "BLUE" : "RED";
-        const currentLosingScore = currentLosingColor === "BLUE" ? state.scoreBlue : state.scoreRed;
-        if (state.losingCornerColor !== currentLosingColor) {
-          state.losingCornerColor = currentLosingColor;
-          state.lastLosingScore = currentLosingScore;
-          state.losingCornerNoScoreDuration = 0;
-        } else {
-          state.lastLosingScore = currentLosingScore;
-        }
-      } else {
-        state.losingCornerColor = null;
-        state.lastLosingScore = undefined;
-        state.losingCornerNoScoreDuration = 0;
-      }
-    } else {
-      state.losingCornerColor = null;
-      state.lastLosingScore = undefined;
-      state.losingCornerNoScoreDuration = 0;
-    }
-  }
-
-  public getWmpPointThreshold(state: MatchState): number {
-    if (Number(state.wmpThreshold) === 20) return 20;
-    if (Number(state.wmpThreshold) === 30) return 30;
-    const combined = `${state.division || ""} ${state.classCategory || ""}`.toUpperCase();
-    const isUsiaDiniOrPraRemaja =
-      combined.includes("USIA DINI") ||
-      combined.includes("USIADINI") ||
-      combined.includes("PRA REMAJA") ||
-      combined.includes("PRA-REMAJA") ||
-      combined.includes("PRAREMAJA");
-    return isUsiaDiniOrPraRemaja ? 20 : 30;
   }
 
   // Resets round-specific infractions and archives teguran deductions into pastPenaltiesDeductions
@@ -1771,17 +1672,12 @@ class OfflineScoringEngine {
     command: "START" | "PAUSE" | "ADD_10" | "SUB_10" | "RESET"
   ): MatchState {
     const newState: MatchState = JSON.parse(JSON.stringify(currentState));
-    const now = getSyncedNow();
 
     if (command === "START") {
       if (!newState.timeLeft || newState.timeLeft <= 0) {
         newState.timeLeft = newState.roundDuration || 120;
-      } else if (currentState.status === MatchStatus.RUNNING) {
-        newState.timeLeft = computeLiveTimeLeft(currentState, now);
       }
       newState.status = MatchStatus.RUNNING;
-      newState.timerStartedAt = now;
-      newState.timerEndAt = now + newState.timeLeft * 1000;
       newState.showNextMatchPopup = false;
       newState.showRoundOverPopup = false;
       newState.juryPanelLocked = false;
@@ -1792,54 +1688,17 @@ class OfflineScoringEngine {
       newState.isTieExtendedPossible = false;
       if (newState.redPenalties) newState.redPenalties.disqualified = false;
       if (newState.bluePenalties) newState.bluePenalties.disqualified = false;
-      // Bunyikan gong saat babak 1,2,3 dimulai (bukan saat resume/lanjutkan dari jeda/pause di tengah babak)
-      const roundDur = newState.roundDuration || 120;
-      const isResuming =
-        currentState.status === MatchStatus.PAUSED &&
-        (currentState.timeLeft || 0) > 0 &&
-        (currentState.timeLeft || 0) < roundDur;
-      if (!isResuming) {
-        sound.playGong();
-      }
+      sound.playGong();
     } else if (command === "PAUSE") {
-      if (currentState.status === MatchStatus.RUNNING) {
-        newState.timeLeft = computeLiveTimeLeft(currentState, now);
-      }
       newState.status = MatchStatus.PAUSED;
-      newState.timerEndAt = null;
-      newState.timerStartedAt = null;
-      // Sound dihilangkan saat jeda/pause sesuai instruksi
+      sound.playBuzzer();
     } else if (command === "ADD_10") {
-      const baseTime =
-        currentState.status === MatchStatus.RUNNING
-          ? computeLiveTimeLeft(currentState, now)
-          : newState.timeLeft || 0;
-      newState.timeLeft = Math.min(newState.roundDuration || 120, baseTime + 10);
-      if (newState.status === MatchStatus.RUNNING) {
-        newState.timerStartedAt = now;
-        newState.timerEndAt = now + newState.timeLeft * 1000;
-      } else {
-        newState.timerEndAt = null;
-        newState.timerStartedAt = null;
-      }
+      newState.timeLeft = Math.min(newState.roundDuration || 120, (newState.timeLeft || 0) + 10);
     } else if (command === "SUB_10") {
-      const baseTime =
-        currentState.status === MatchStatus.RUNNING
-          ? computeLiveTimeLeft(currentState, now)
-          : newState.timeLeft || 0;
-      newState.timeLeft = Math.max(0, baseTime - 10);
-      if (newState.status === MatchStatus.RUNNING) {
-        newState.timerStartedAt = now;
-        newState.timerEndAt = now + newState.timeLeft * 1000;
-      } else {
-        newState.timerEndAt = null;
-        newState.timerStartedAt = null;
-      }
+      newState.timeLeft = Math.max(0, (newState.timeLeft || 0) - 10);
     } else if (command === "RESET") {
       newState.status = MatchStatus.IDLE;
       newState.timeLeft = newState.roundDuration || 120;
-      newState.timerEndAt = null;
-      newState.timerStartedAt = null;
       newState.showRoundOverPopup = false;
       newState.showNextMatchPopup = true;
       newState.winnerPublished = false;
@@ -2004,6 +1863,7 @@ class OfflineScoringEngine {
         newState.secretarySignalNextRound = false;
         newState.showRoundOverPopup = false;
         this.recalculateScores(newState);
+        sound.playGong();
       }
     } else if (roundAction === "SET" && typeof targetRound === "number") {
       if (targetRound !== newState.activeRound) {
@@ -2037,7 +1897,7 @@ class OfflineScoringEngine {
       if (!winnerResult.tieExtended) {
         this.archiveFinishedMatchOffline(newState);
       }
-      sound.playGong();
+      sound.playBuzzer();
     }
 
     this.stampStateMutation(newState, currentState);

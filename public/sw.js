@@ -66,6 +66,23 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Cache-first for images, icons, and audio assets for 0ms instant asset loading
+  if (url.pathname.match(/\.(png|jpg|jpeg|svg|ico|webp|mp3|wav|ogg)$/i)) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(event.request).then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return networkResponse;
+        });
+      })
+    );
+    return;
+  }
+
   // Network-first for HTML navigation and JS/CSS bundles to avoid stale module hashes
   event.respondWith(
     fetch(event.request)

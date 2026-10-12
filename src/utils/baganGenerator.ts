@@ -217,6 +217,9 @@ export function loadAllRegisteredParticipants(): any[] {
     const name = (item.name || "").trim().toUpperCase();
     if (!name || isDummyAthlete(item)) return;
 
+    const category = (item.category || "").toUpperCase();
+    if (category === "JURUS" || category === "SENI") return;
+
     const club = (item.club || item.contingent || item.kontingen || "MANDIRI").trim().toUpperCase();
     const gender = (item.gender || "PUTRA").toUpperCase().includes("PUTRI") || (item.gender || "").toUpperCase() === "P" ? "PUTRI" : "PUTRA";
 
@@ -1224,8 +1227,7 @@ export function getCategoryPrestasiSchemesFromStorage(): Record<string, string> 
 export function buildAutoSchedulesAndCategories(
   rawParticipants: any[],
   existingSchedulesInput?: any[],
-  preferredArena: string = "GELANGGANG A",
-  options?: { ignoreManualOverrides?: boolean; resetCategoryClassId?: string; resetGender?: string }
+  preferredArena: string = "GELANGGANG A"
 ): {
   participants: any[];
   categories: any[];
@@ -1299,7 +1301,7 @@ export function buildAutoSchedulesAndCategories(
   const allMatches: any[] = [];
   let nextMatchNumber = 1;
 
-  // Helper untuk memelihara skor/pemenang serta perubahan manual partai jika sudah diedit pengguna
+  // Helper untuk memelihara skor/pemenang jika partai sudah dimainkan sebelumnya
   const applyExistingResult = (matchObj: any) => {
     const existing = existingSchedules.find(ex =>
       ex.id === matchObj.id ||
@@ -1309,41 +1311,7 @@ export function buildAutoSchedulesAndCategories(
         ex.fighterBlueName === matchObj.fighterBlueName &&
         ex.fighterRedName === matchObj.fighterRedName)
     );
-    if (!existing) return matchObj;
-
-    const isResetTarget =
-      options?.ignoreManualOverrides &&
-      (!options.resetCategoryClassId ||
-        (existing.categoryClassId === options.resetCategoryClassId &&
-          (!options.resetGender || existing.gender === options.resetGender)));
-
-    if (existing.isManualModified && !isResetTarget) {
-      return {
-        ...matchObj,
-        matchNumber: existing.matchNumber ?? matchObj.matchNumber,
-        arena: existing.arena || matchObj.arena,
-        stage: existing.stage || matchObj.stage,
-        categoryClassId: existing.categoryClassId || matchObj.categoryClassId,
-        ageCategory: existing.ageCategory || matchObj.ageCategory,
-        division: existing.division || matchObj.division,
-        weightClass: existing.weightClass || matchObj.weightClass,
-        classCategory: existing.classCategory || matchObj.classCategory,
-        gender: existing.gender || matchObj.gender,
-        fighterBlueId: existing.fighterBlueId ?? matchObj.fighterBlueId,
-        fighterBlueName: existing.fighterBlueName ?? matchObj.fighterBlueName,
-        fighterBlueClub: existing.fighterBlueClub ?? matchObj.fighterBlueClub,
-        fighterRedId: existing.fighterRedId ?? matchObj.fighterRedId,
-        fighterRedName: existing.fighterRedName ?? matchObj.fighterRedName,
-        fighterRedClub: existing.fighterRedClub ?? matchObj.fighterRedClub,
-        status: existing.status || matchObj.status,
-        winner: existing.winner ?? matchObj.winner,
-        scoreBlue: existing.scoreBlue ?? matchObj.scoreBlue,
-        scoreRed: existing.scoreRed ?? matchObj.scoreRed,
-        isManualModified: true
-      };
-    }
-
-    if (existing.status === "SELESAI" || existing.status === "SEDANG" || existing.winner) {
+    if (existing && (existing.status === "SELESAI" || existing.status === "SEDANG" || existing.winner)) {
       matchObj.status = existing.status;
       matchObj.winner = existing.winner;
       matchObj.scoreBlue = existing.scoreBlue ?? matchObj.scoreBlue;
@@ -1877,98 +1845,11 @@ export function buildAutoSchedulesAndCategories(
     }
   });
 
-  // Pertahankan partai tambahan yang dibuat secara manual (isManualCreated) jika tidak sedang di-reset penuh
-  if (!options?.ignoreManualOverrides) {
-    existingSchedules.forEach((ex) => {
-      if (ex && ex.isManualCreated && !allMatches.some((m) => m.id === ex.id)) {
-        allMatches.push(ex);
-      }
-    });
-  }
-
   return {
     participants: normalizedParticipants,
     categories: categoriesList,
     matches: allMatches
   };
-}
-
-// Simpan perubahan manual data partai hasil loting ke localStorage, Server, dan BroadcastChannel
-export async function saveManualSchedulesOverride(
-  updatedMatches: any[],
-  currentParticipants?: any[],
-  currentCategories?: any[]
-): Promise<any[]> {
-  let participantsList = currentParticipants;
-  let categoriesList = currentCategories;
-
-  if (!participantsList) {
-    try {
-      const rawP = localStorage.getItem("jrz_cached_participants");
-      participantsList = rawP ? JSON.parse(rawP) : [];
-    } catch {
-      participantsList = [];
-    }
-  }
-
-  if (!categoriesList) {
-    try {
-      const rawC = localStorage.getItem("jrz_cached_categories");
-      categoriesList = rawC ? JSON.parse(rawC) : [];
-    } catch {
-      categoriesList = [];
-    }
-  }
-
-  try {
-    localStorage.setItem("jrz_cached_schedules", JSON.stringify(updatedMatches));
-    localStorage.setItem("match_schedules", JSON.stringify(updatedMatches));
-    localStorage.setItem("jrz_bracket_cleared", updatedMatches.length === 0 ? "true" : "false");
-  } catch (e) {
-    console.warn("Gagal menyimpan jadwal manual ke localStorage:", e);
-  }
-
-  try {
-    await fetch("/api/tournament/import-batch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        newCategories: categoriesList || [],
-        newParticipants: participantsList || [],
-        newMatches: updatedMatches
-      })
-    });
-  } catch {}
-
-  // Sinkronisasi ke Firebase Realtime Database (Online mode / GitHub Pages)
-  try {
-    const { syncTournamentToFirebase } = await import("../services/firebase");
-    syncTournamentToFirebase(updatedMatches, participantsList, categoriesList).catch(() => {});
-  } catch {}
-
-  try {
-    window.dispatchEvent(
-      new CustomEvent("jrz_tournament_synced", {
-        detail: {
-          participants: participantsList || [],
-          categories: categoriesList || [],
-          matches: updatedMatches,
-          bracketCleared: updatedMatches.length === 0
-        }
-      })
-    );
-    window.dispatchEvent(new CustomEvent("jrz_schedules_updated", { detail: updatedMatches }));
-    window.dispatchEvent(new Event("storage"));
-    const ch = new BroadcastChannel("jrz_match_sync_A");
-    ch.postMessage({
-      type: "TOURNAMENT_SYNCED",
-      participantsCount: (participantsList || []).length,
-      matchesCount: updatedMatches.length
-    });
-    ch.close();
-  } catch {}
-
-  return updatedMatches;
 }
 
 // Sinkronisasi penuh (localStorage + Backend Server + BroadcastChannel + CustomEvent)
@@ -1990,12 +1871,7 @@ export async function syncAndGenerateSchedulesFromParticipants(
   const { participants, categories, matches } = buildAutoSchedulesAndCategories(
     rawParticipants,
     options?.preserveExistingSchedules,
-    options?.preferredArena || "GELANGGANG A",
-    {
-      ignoreManualOverrides: options?.ignoreManualOverrides,
-      resetCategoryClassId: options?.resetCategoryClassId,
-      resetGender: options?.resetGender
-    }
+    options?.preferredArena || "GELANGGANG A"
   );
 
   try {
@@ -2023,12 +1899,6 @@ export async function syncAndGenerateSchedulesFromParticipants(
     });
   } catch {}
 
-  // Sinkronisasi ke Firebase Realtime Database (Online mode / GitHub Pages)
-  try {
-    const { syncTournamentToFirebase } = await import("../services/firebase");
-    syncTournamentToFirebase(matches, participants, categories).catch(() => {});
-  } catch {}
-
   // Broadcast ke seluruh komponen dan tab
   try {
     window.dispatchEvent(new CustomEvent("jrz_tournament_synced", {
@@ -2043,6 +1913,67 @@ export async function syncAndGenerateSchedulesFromParticipants(
   } catch {}
 
   return { participants, categories, matches };
+}
+
+// Simpan override jadwal & peserta secara manual (tanpa regenerate ulang bagan secara acak)
+export async function saveManualSchedulesOverride(
+  matches: any[],
+  participants: any[],
+  categories?: any[]
+): Promise<{
+  participants: any[];
+  categories: any[];
+  matches: any[];
+}> {
+  let resolvedCategories = categories;
+  if (!resolvedCategories || !resolvedCategories.length) {
+    try {
+      const saved = localStorage.getItem("jrz_cached_categories");
+      if (saved) resolvedCategories = JSON.parse(saved);
+    } catch {}
+    if (!resolvedCategories || !Array.isArray(resolvedCategories)) {
+      resolvedCategories = [];
+    }
+  }
+
+  try {
+    localStorage.setItem("jrz_cached_participants", JSON.stringify(participants));
+    localStorage.setItem("jrz_cached_schedules", JSON.stringify(matches));
+    if (resolvedCategories.length > 0) {
+      localStorage.setItem("jrz_cached_categories", JSON.stringify(resolvedCategories));
+    }
+    localStorage.setItem("jrz_bracket_cleared", "false");
+  } catch (e) {
+    console.warn("Gagal menyimpan ke localStorage:", e);
+  }
+
+  // Kirim ke server
+  try {
+    await fetch("/api/tournament/import-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        newCategories: resolvedCategories,
+        newParticipants: participants,
+        newMatches: matches
+      })
+    });
+  } catch {}
+
+  // Broadcast ke seluruh komponen dan tab
+  try {
+    window.dispatchEvent(new CustomEvent("jrz_tournament_synced", {
+      detail: { participants, categories: resolvedCategories, matches, bracketCleared: false }
+    }));
+    window.dispatchEvent(new CustomEvent("jrz_schedules_updated", { detail: matches }));
+    window.dispatchEvent(new CustomEvent("jrz_athletes_updated", { detail: { participants } }));
+    window.dispatchEvent(new Event("storage"));
+    const ch = new BroadcastChannel("jrz_match_sync_A");
+    ch.postMessage({ type: "TOURNAMENT_SYNCED", participantsCount: participants.length, matchesCount: matches.length });
+    ch.close();
+  } catch {}
+
+  return { participants, categories: resolvedCategories, matches };
 }
 
 // Fungsi resmi untuk mengosongkan seluruh Bagan & Jadwal Pertandingan (dan opsional data atlet)
@@ -2082,12 +2013,6 @@ export async function clearAllSchedulesAndBrackets(options?: { clearAthletes?: b
         newMatches: []
       })
     });
-  } catch {}
-
-  // Sinkronisasi pembersihan ke Firebase Realtime Database
-  try {
-    const { syncTournamentToFirebase } = await import("../services/firebase");
-    syncTournamentToFirebase([], clearAthletes ? [] : currentParticipants, clearAthletes ? [] : currentCategories).catch(() => {});
   } catch {}
 
   try {

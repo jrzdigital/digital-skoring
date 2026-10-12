@@ -85,9 +85,10 @@ export interface MatchState {
   activeRound: number; // current round
   roundDuration: number; // default 120 seconds (2 mins)
   timeLeft: number; // active timer in seconds
-  timerEndAt?: number | null; // epoch timestamp (ms) when running countdown reaches 0
-  timerStartedAt?: number | null; // epoch timestamp (ms) when running countdown was started/adjusted
   status: MatchStatus;
+  timerEndAt?: number | null;
+  timerStartedAt?: number | null;
+  wmpThreshold?: number;
   
   // Total Scores
   scoreRed: number;
@@ -154,7 +155,6 @@ export interface MatchState {
   juryPanelLocked?: boolean;
   dewanPanelLocked?: boolean;
   division?: string;
-  wmpThreshold?: 20 | 30;
   losingCornerNoScoreDuration?: number;
   losingCornerColor?: "RED" | "BLUE" | null;
   lastLosingScore?: number;
@@ -359,6 +359,134 @@ export interface IpUnlockRequest {
   approvedBy?: string;
 }
 
+// -------------------------------------------------------------
+// EKSTRAKURIKULER & LAPORAN PRESTASI SISWA / DOJO
+// -------------------------------------------------------------
+export type BeltLevel = 'Putih / Dasar' | 'Hijau' | 'Biru' | 'Merah / Pelatih';
+
+export interface Student {
+  id: string;
+  nis: string;
+  name: string;
+  classGrade: string;
+  gender: 'L' | 'P';
+  beltLevel: BeltLevel;
+  phone: string;
+  parentPhone: string;
+  status: 'Aktif' | 'Nonaktif' | string;
+  photoUrl?: string;
+  skillRatings?: {
+    fisik: number;
+    teknik: number;
+    seni: number;
+    tanding: number;
+    disiplin: number;
+  };
+}
+
+export interface TrainingPhoto {
+  id: string;
+  url: string;
+  caption?: string;
+  timestamp?: string;
+}
+
+export interface StudentAttendance {
+  studentId: string;
+  status: 'hadir' | 'izin' | 'sakit' | 'alpha' | string;
+  score?: number;
+  notes?: string;
+}
+
+export interface TrainingLog {
+  id: string;
+  number: string;
+  day: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  trainingType: string;
+  category: string;
+  functionDescription: string;
+  coachNotes: string;
+  location: string;
+  photos?: TrainingPhoto[];
+  attendance: StudentAttendance[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SchoolProfile {
+  governmentAgency: string;
+  schoolName: string;
+  schoolAddress: string;
+  schoolPhone: string;
+  schoolEmail: string;
+  phone?: string;
+  email?: string;
+  schoolWebsite?: string;
+  extracurricularName: string;
+  organizationBranch: string;
+  academicYear: string;
+  semester: string;
+  principalName: string;
+  principalNip: string;
+  principalTitle: string;
+  coachName: string;
+  coachNip: string;
+  coachTitle: string;
+  city: string;
+  schoolLogo?: string;
+  coachSignature?: string;
+  principalSignature?: string;
+}
+
+export interface ScheduleReminder {
+  id: string;
+  day: string;
+  time: string;
+  durationMinutes: number;
+  location: string;
+  topic: string;
+  isActive: boolean;
+}
+
+export interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+  type: 'schedule' | 'evaluation' | 'attendance' | string;
+}
+
+export interface E2EESettings {
+  isEncryptionEnabled: boolean;
+  isUnlocked: boolean;
+  passphraseHash?: string;
+  lastBackupDate?: string;
+}
+
+export interface QRScanRecord {
+  id?: string;
+  studentId: string;
+  studentNis?: string;
+  studentName?: string;
+  classGrade?: string;
+  beltLevel?: string;
+  scannedAt?: string;
+  timestamp?: string | number;
+  dateFormatted: string;
+  timeFormatted?: string;
+  status?: string;
+  method?: string;
+  trainingLogId?: string;
+  verified?: boolean;
+}
+
+export type StudentAttendanceRecord = StudentAttendance;
+export type AttendanceStatus = 'hadir' | 'izin' | 'sakit' | 'alpha' | string;
+export type ActionLog = MatchLog;
 export interface Athlete {
   id: string;
   name?: string;
@@ -372,11 +500,9 @@ export interface Athlete {
   [key: string]: any;
 }
 
-export type ActionLog = any;
-export type Student = any;
-export type TrainingLog = any;
-export type SchoolProfile = any;
-export type ScheduleReminder = any;
-export type NotificationItem = any;
-export type E2EESettings = any;
-export type QRScanRecord = any;
+export type AppState = any;
+export type Match = any;
+export type CompetitorPerformance = any;
+export type JudgeScore = any;
+
+

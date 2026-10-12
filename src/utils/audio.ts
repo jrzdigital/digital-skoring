@@ -153,6 +153,18 @@ class SoundEffects {
     this.playChime();
   }
 
+  playWhistle() {
+    this.playBuzzer();
+  }
+
+  playScoreHit(_points?: number) {
+    this.playChime();
+  }
+
+  playPenalty() {
+    this.playAlert();
+  }
+
   playGong() {
     try {
       this.init();
@@ -191,6 +203,7 @@ class SoundEffects {
 
 export const soundEffects = new SoundEffects();
 export const sound = soundEffects;
+export const soundManager = soundEffects;
 
 export function playSoundByKey(key: string): void {
   switch (key) {

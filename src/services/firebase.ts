@@ -97,7 +97,7 @@ export const googleProvider = googleProviderInstance;
 let isRealtimeConnected = false;
 let isFlushingPendingSync = false;
 
-function withFirebaseTimeout<T>(promise: Promise<T>, timeoutMs = 1500): Promise<T> {
+function withFirebaseTimeout<T>(promise: Promise<T>, timeoutMs = 6000): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error("FIREBASE_TIMEOUT"));
@@ -757,15 +757,22 @@ export function subscribeToActiveMatch(
               window.localStorage.setItem("ipsi_match_state", rawMerged);
             } catch {}
 
-            if (localIsNewer) {
+            const localActions = (localCurrent?.redStats?.punches || 0) + (localCurrent?.redStats?.kicks || 0) +
+              (localCurrent?.blueStats?.punches || 0) + (localCurrent?.blueStats?.kicks || 0);
+            const remoteActions = (remoteNormalized?.redStats?.punches || 0) + (remoteNormalized?.redStats?.kicks || 0) +
+              (remoteNormalized?.blueStats?.punches || 0) + (remoteNormalized?.blueStats?.kicks || 0);
+
+            if (localIsNewer && pending && localActions >= remoteActions && (localCurrent?.lastUpdatedAt || 0) > (remoteNormalized?.lastUpdatedAt || 0) + 1500) {
               const cleanMerged = sanitizeForFirebase(merged);
-              withFirebaseTimeout(fbSet(arenaMatchRef, cleanMerged), 2000)
+              withFirebaseTimeout(fbSet(arenaMatchRef, cleanMerged), 5000)
                 .then(() => setPendingCloudSync(arena, false))
                 .catch(() => setPendingCloudSync(arena, true));
               if (arena === "A") {
                 const rootMatchRef = fbRef(db, "activeMatch");
                 fbSet(rootMatchRef, cleanMerged).catch(() => {});
               }
+            } else if (remoteActions >= localActions) {
+              setPendingCloudSync(arena, false);
             }
 
             callback(merged);
@@ -889,7 +896,7 @@ export async function pushJuryPressToFirebase(
   juryId: number,
   fighter: FighterColor,
   action: ActionType,
-  pressedAt = Date.now(),
+  pressedAt = getSyncedNow(),
   arena = getActiveArena()
 ): Promise<void> {
   if (typeof window === "undefined") return;
@@ -912,13 +919,24 @@ export async function pushJuryPressToFirebase(
     try {
       const pressRef = fbRef(db, `arenas/${arena}/activeJuryPresses/${juryId}`);
       fbSet(pressRef, pressData).catch(() => {});
-      setTimeout(() => {
+      if (arena === "A") {
+        const rootPressRef = fbRef(db, `activeJuryPresses/${juryId}`);
+        fbSet(rootPressRef, pressData).catch(() => {});
+      }
+      setTimeout(async () => {
         try {
           if (db) {
-            fbSet(pressRef, null).catch(() => {});
+            const snap = await fbGet(pressRef);
+            if (snap.exists() && snap.val()?.pressedAt === pressedAt) {
+              await fbSet(pressRef, null);
+              if (arena === "A") {
+                const rootPressRef = fbRef(db, `activeJuryPresses/${juryId}`);
+                await fbSet(rootPressRef, null);
+              }
+            }
           }
         } catch {}
-      }, 2200);
+      }, 2500);
     } catch {}
   }
 }
@@ -939,7 +957,7 @@ export function subscribeToJuryPresses(
           [ev.data.juryId]: {
             fighter: ev.data.fighter,
             action: ev.data.action,
-            pressedAt: ev.data.pressedAt || Date.now()
+            pressedAt: ev.data.pressedAt || getSyncedNow()
           }
         });
       }
@@ -953,6 +971,8 @@ export function subscribeToJuryPresses(
       unsubRtdb = fbOnValue(pressesRef, (snap) => {
         if (snap.exists()) {
           callback(snap.val());
+        } else {
+          callback({});
         }
       });
     } catch {}
@@ -1499,4 +1519,10 @@ function initRealtimeAppStorageBridge() {
   } catch {}
 }
 
-initRealtimeAppStorageBridge();
+if (typeof window !== "undefined") {
+  if (typeof (window as any).requestIdleCallback === "function") {
+    (window as any).requestIdleCallback(() => initRealtimeAppStorageBridge());
+  } else {
+    setTimeout(initRealtimeAppStorageBridge, 200);
+  }
+}

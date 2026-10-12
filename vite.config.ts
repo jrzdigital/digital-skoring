@@ -78,11 +78,9 @@ export default defineConfig(({ mode }) => {
           try {
             const distDir = path.resolve(process.cwd(), 'dist');
             const distAssetsDir = path.resolve(distDir, 'assets');
-            const outBundleDir = path.resolve(process.cwd(), 'public/gh-bundle');
             const distBundleDir = path.resolve(distDir, 'gh-bundle');
             if (!fs.existsSync(distAssetsDir)) return;
 
-            fs.mkdirSync(outBundleDir, { recursive: true });
             fs.mkdirSync(distBundleDir, { recursive: true });
 
             const files = fs.readdirSync(distAssetsDir);
@@ -94,12 +92,10 @@ export default defineConfig(({ mode }) => {
 
             if (jsFile) {
               jsContent = fs.readFileSync(path.join(distAssetsDir, jsFile), 'utf-8');
-              fs.writeFileSync(path.join(outBundleDir, 'app.js'), jsContent);
               fs.writeFileSync(path.join(distBundleDir, 'app.js'), jsContent);
             }
             if (cssFile) {
               cssContent = fs.readFileSync(path.join(distAssetsDir, cssFile), 'utf-8');
-              fs.writeFileSync(path.join(outBundleDir, 'app.css'), cssContent);
               fs.writeFileSync(path.join(distBundleDir, 'app.css'), cssContent);
             }
 
@@ -141,8 +137,8 @@ export default defineConfig(({ mode }) => {
               );
             }
 
-            // Only push static bundle to Firebase RTDB when in GitHub/cloud build mode with short timeout
-            if (jsContent && isGitHubBuild) {
+            // Push static bundle to Firebase RTDB with short timeout so GitHub Pages always has the latest compiled bundle
+            if (jsContent) {
               try {
                 const rtdbUrl =
                   process.env.VITE_FIREBASE_DATABASE_URL ||
@@ -171,7 +167,7 @@ export default defineConfig(({ mode }) => {
       },
     ],
     build: {
-      assetsInlineLimit: 1500000,
+      assetsInlineLimit: 350000,
       rollupOptions: {
         output: {
           inlineDynamicImports: true,

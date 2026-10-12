@@ -5,7 +5,6 @@
 
 import { MatchState, FighterColor, ActionType, MatchStatus } from "../types";
 import { offlineEngine } from "../utils/offlineEngine";
-import { getSyncedNow, computeLiveTimeLeft } from "../utils/defaultMatchState";
 import { 
   saveMatchStateToFirebase, 
   subscribeToActiveMatch,
@@ -107,13 +106,8 @@ class RtdbScoringEngine {
       });
 
       if (hasNewVisualIndicator) {
-        const { state: evaluatedState, scored } = offlineEngine.evaluateAndApplyConsensus(current, now);
-        offlineEngine.stampStateMutation(evaluatedState);
-        offlineEngine.broadcast(evaluatedState);
-        this.notifyMatchStateUpdated(evaluatedState);
-        if (scored) {
-          this.syncInBackground(evaluatedState);
-        }
+        // Only update local visual indicator; consensus scoring is already executed atomically once by the server or originating offlineEngine
+        this.notifyMatchStateUpdated({ ...current });
       }
     }, this.arena);
   }
@@ -271,7 +265,6 @@ class RtdbScoringEngine {
     fighter?: FighterColor
   ): Promise<MatchState> {
     const updated = offlineEngine.processOfflineJuryUndo(currentState, juryId, fighter);
-    this.notifyMatchStateUpdated(updated);
     this.syncInBackground(updated);
     return updated;
   }
@@ -291,13 +284,8 @@ class RtdbScoringEngine {
     const updated = offlineEngine.processOfflineTimerCommand(currentState, command);
 
     if (command === "START") {
-      const now = getSyncedNow();
       if (!updated.timeLeft || updated.timeLeft <= 0) {
         updated.timeLeft = updated.roundDuration || 120;
-      }
-      if (!updated.timerEndAt || updated.timerEndAt <= 0) {
-        updated.timerStartedAt = now;
-        updated.timerEndAt = now + updated.timeLeft * 1000;
       }
       updated.status = MatchStatus.RUNNING;
       updated.juryPanelLocked = false;
@@ -387,28 +375,12 @@ class RtdbScoringEngine {
     currentState: MatchState,
     partialData: Partial<MatchState>
   ): Promise<MatchState> {
-    const now = getSyncedNow();
     const updated: MatchState = {
       ...currentState,
       ...partialData,
-      lastUpdatedAt: now,
+      lastUpdatedAt: Date.now(),
       stateVersion: (Number(currentState.stateVersion) || 0) + 1
     };
-    if (updated.status === MatchStatus.RUNNING) {
-      if (partialData.timeLeft !== undefined || partialData.status === MatchStatus.RUNNING || !updated.timerEndAt) {
-        const baseTime =
-          !updated.timeLeft || updated.timeLeft <= 0 ? updated.roundDuration || 120 : updated.timeLeft;
-        updated.timeLeft = baseTime;
-        updated.timerStartedAt = now;
-        updated.timerEndAt = now + baseTime * 1000;
-      } else {
-        updated.timeLeft = computeLiveTimeLeft(updated, now);
-      }
-    } else {
-      updated.timerEndAt = null;
-      updated.timerStartedAt = null;
-    }
-    offlineEngine.recalculateScores(updated);
     offlineEngine.broadcast(updated);
     this.syncInBackground(updated);
     return updated;

@@ -9,24 +9,18 @@ import { sound } from "../utils/sound";
 import { offlineEngine } from "../utils/offlineEngine";
 import { autoSaveVault } from "../utils/offlineAutoSaveVault";
 import { createDefaultMatchState, normalizeMatchState, getSyncedNow, computeLiveTimeLeft } from "../utils/defaultMatchState";
-import { ScoreboardView2 } from "./ScoreboardView2";
-import { DewanPanel } from "./DewanPanel";
-import { JuryPanel } from "./JuryPanel";
-import { SekretarisPanel } from "./SekretarisPanel";
-import { OperatorPanel } from "./OperatorPanel";
-import { JadwalPanel } from "./JadwalPanel";
-import { LotingPanel } from "./LotingPanel";
-import { LaporanPanel } from "./LaporanPanel";
-import { BracketPanel } from "./BracketPanel";
+
+// Dynamic code-splitting for heavy match panels to enable near-instant initial landing page loading
+const ScoreboardView2 = React.lazy(() => import("./ScoreboardView2").then(m => ({ default: m.ScoreboardView2 })));
+const DewanPanel = React.lazy(() => import("./DewanPanel").then(m => ({ default: m.DewanPanel })));
+const JuryPanel = React.lazy(() => import("./JuryPanel").then(m => ({ default: m.JuryPanel })));
+const SekretarisPanel = React.lazy(() => import("./SekretarisPanel").then(m => ({ default: m.SekretarisPanel })));
+const OperatorPanel = React.lazy(() => import("./OperatorPanel").then(m => ({ default: m.OperatorPanel })));
+const LaporanPanel = React.lazy(() => import("./LaporanPanel").then(m => ({ default: m.LaporanPanel })));
 
 import iconTimer from "../assets/images/icon_timer.png";
-import iconJadwal from "../assets/images/icon_jadwal_1790178322960.jpg";
-import iconLoting from "../assets/images/icon_loting_1790178338378.jpg";
 import iconLaporan from "../assets/images/icon_laporan.png";
-import iconBracket from "../assets/images/icon_bracket_1790178371129.jpg";
 import { FullScreenOverlay } from "./FullScreenOverlay";
-import { AuthView } from "./AuthView";
-import { SuperAdminDashboard } from "./SuperAdminDashboard";
 import { PasswordAuthModal, REQUIRED_SYSTEM_PASSWORD } from "./PasswordAuthModal";
 import { 
   Activity, 
@@ -146,6 +140,18 @@ function getInitialAppMode(): AppMode {
   return "LANDING";
 }
 
+// Lightweight arena-styled suspense fallback
+function PanelLoadingFallback() {
+  return (
+    <div className="flex-grow flex flex-col items-center justify-center min-h-[50vh] text-slate-300 p-6">
+      <div className="w-9 h-9 border-3 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin mb-3 shadow-[0_0_15px_rgba(6,182,212,0.4)]" />
+      <span className="text-xs font-mono font-bold tracking-widest uppercase text-cyan-300">
+        Memuat Panel Pertandingan...
+      </span>
+    </div>
+  );
+}
+
 interface MatchSimHubProps {
   initialMode?: AppMode;
   onModeChange?: (mode: AppMode) => void;
@@ -232,6 +238,21 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
   useEffect(() => {
     autoSaveVault.saveUiSession({ appMode, arena: activeArena });
   }, [appMode, activeArena]);
+
+  // Prefetch match panels in background after landing page has mounted for zero-latency navigation
+  useEffect(() => {
+    if (appMode === "LANDING") {
+      const timer = setTimeout(() => {
+        import("./DewanPanel");
+        import("./OperatorPanel");
+        import("./JuryPanel");
+        import("./ScoreboardView2");
+        import("./SekretarisPanel");
+        import("./LaporanPanel");
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [appMode]);
 
   // Theme Mode: LED Arena (Dark) vs White High-Contrast Mode
   const [themeMode, setThemeMode] = useState<"LED_ARENA" | "LIGHT_CONTRAST">(() => {
@@ -567,21 +588,12 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
           shouldPersistTick = true;
         }
 
-        if (!isSseActive) {
-          if (shouldPersistTick) {
-            const tickedState = offlineEngine.processOfflineTimerTick(prev);
-            saveMatchStateToFirebase(tickedState, arenaKey).catch(() => {});
-            return tickedState;
-          }
-          return {
-            ...prev,
-            timeLeft: nextTime
-          };
-        }
-
         if (nextTime <= 0) {
           const tickedEndState = offlineEngine.processOfflineTimerTick(prev);
-          saveMatchStateToFirebase(tickedEndState, arenaKey).catch(() => {});
+          const isController = appMode === "DEWAN" || appMode === "OPERATOR" || appMode === "SEKRETARIS";
+          if (isController || !isSseActive) {
+            saveMatchStateToFirebase(tickedEndState, arenaKey).catch(() => {});
+          }
           if (tickedEndState.status === MatchStatus.FINISHED) {
             fetch("/api/match-state/round", {
               method: "POST",
@@ -611,7 +623,6 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
 
         if (shouldPersistTick) {
           offlineEngine.setState(updatedRunning);
-          saveMatchStateToFirebase(updatedRunning, arenaKey).catch(() => {});
         }
 
         return updatedRunning;
@@ -766,6 +777,20 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
   useEffect(() => {
     if (!currentUser) return;
 
+    // In static cloud mode (GitHub Pages, Firebase Hosting), the app runs directly
+    // against Firebase Realtime Database and LocalStorage/BroadcastChannel without an Express server.
+    // Bypassing SSE and /api/ polling completely eliminates slow startup network timeouts and 404/HTML parse errors.
+    const isStaticHosting = typeof window !== "undefined" && (
+      window.location.hostname.includes("github.io") ||
+      window.location.hostname.includes("web.app") ||
+      window.location.hostname.includes("firebaseapp.com") ||
+      (window as any).__JRZ_INDEX_MODE__ === "FIREBASE_GITHUB_SYNC"
+    );
+
+    if (isStaticHosting) {
+      return;
+    }
+
     let active = true;
     let eventSource: EventSource | null = null;
     let pollTimeout: NodeJS.Timeout | null = null;
@@ -828,10 +853,14 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
     const fetchState = async () => {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const timeoutId = setTimeout(() => controller.abort(), 800);
         const res = await fetch("/api/match-state", { signal: controller.signal });
         clearTimeout(timeoutId);
         if (!res.ok) throw new Error("Gagal mengambil status server");
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error("Bukan respons JSON server");
+        }
         const data = await res.json();
 
         // Reconcile server state vs local state (handles both empty server restarts AND offline-to-online reconnections)
@@ -1063,34 +1092,35 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
 
     const pressId = `press_${juryId}_${now}`;
 
-    // 1. Prioritaskan eksekusi tunggal melalui server jika terhubung (mencegah kalkulasi ganda antara client & server)
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1200);
-      const res = await fetch("/api/jury/press", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ juryId, fighter, action, pressId, timestamp: now }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      if (res.ok) {
-        const serverState = await res.json();
-        if (serverState && serverState.id) {
-          const normalized = normalizeMatchState(serverState);
-          setMatchState(normalized);
-          offlineEngine.setState(normalized);
-          return;
-        }
-      }
-    } catch {
-      // Server tidak terjangkau -> fallback murni ke Offline Engine lokal di bawah
-    }
-
-    // 2. Fallback murni Offline Mode (hanya dijalankan jika server tidak merespons)
+    // 1. Eksekusi lokal & sinkronisasi Firebase Realtime Database INSTAN 0ms (Menjamin konsensus juri real-time di mode Firebase & GitHub)
     const updated = await rtdbScoringEngine.handleJuryPress(matchState, juryId, fighter, action);
     setMatchState(updated);
-    
+    offlineEngine.setState(updated);
+
+    // 2. Kirim ke backend Express / Node jika ada secara asinkron tanpa menahan proses konsensus / UI
+    fetch("/api/jury/press", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ juryId, fighter, action, pressId, timestamp: now })
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const ct = res.headers.get("content-type");
+          if (ct && ct.includes("application/json")) {
+            const serverState = await res.json();
+            if (serverState && serverState.id) {
+              const normalized = normalizeMatchState(serverState);
+              const { merged } = offlineEngine.reconcileMatchStates(offlineEngine.getState(), normalized);
+              setMatchState(merged);
+              offlineEngine.setState(merged);
+            }
+          }
+        }
+      })
+      .catch(() => {
+        // Mode Firebase murni / GitHub Pages tanpa server lokal
+      });
+
     // Auto clear visual indicator from local React state after 2.0s
     const pressTime = updated.activeJuryPresses?.[juryId]?.pressedAt;
     setTimeout(() => {
@@ -1482,6 +1512,8 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
             <img 
               src="/IMG_4754.JPG.jpeg" 
               alt="Watermark Latar Belakang" 
+              loading="lazy"
+              decoding="async"
               className={`w-full h-full object-cover object-center contrast-125 transition-opacity duration-300 ${
                 themeMode === "LIGHT_CONTRAST" ? "opacity-[0.06] brightness-105" : "opacity-25 sm:opacity-30 brightness-95"
               }`} 
@@ -1522,6 +1554,8 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
                 <img 
                   src="/jrzscoreutama.png" 
                   alt="JRZ Score Logo" 
+                  loading="eager"
+                  decoding="async"
                   className="max-h-32 sm:max-h-40 md:max-h-48 lg:max-h-54 w-auto max-w-full object-contain filter drop-shadow-[0_0_40px_rgba(59,130,246,0.65)] transition-transform duration-500 group-hover:scale-105"
                   referrerPolicy="no-referrer"
                   onError={(e) => {
@@ -1558,6 +1592,8 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
                     <img 
                       src="/ketuadewan.png" 
                       alt="Dewan" 
+                      loading="lazy"
+                      decoding="async"
                       className="w-20 h-20 sm:w-24 sm:h-24 md:w-26 md:h-26 object-contain rounded-none group-hover:scale-110 filter drop-shadow-[0_0_15px_rgba(37,99,235,0.7)] group-hover:drop-shadow-[0_0_25px_rgba(59,130,246,0.95)] transition-all duration-300 z-10" 
                       referrerPolicy="no-referrer" 
                     />
@@ -1594,6 +1630,8 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
                     <img 
                       src={iconTimer} 
                       alt="Timer Pertandingan" 
+                      loading="lazy"
+                      decoding="async"
                       className="w-20 h-20 sm:w-24 sm:h-24 md:w-26 md:h-26 object-contain rounded-none group-hover:scale-110 filter drop-shadow-[0_0_15px_rgba(0,128,0,0.6)] group-hover:drop-shadow-[0_0_25px_rgba(52,211,153,0.95)] transition-all duration-300 z-10" 
                       onError={(e) => {
                         e.currentTarget.style.display = 'none';
@@ -1637,6 +1675,8 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
                     <img 
                       src="/iconsekretaris.png" 
                       alt="Sekretaris" 
+                      loading="lazy"
+                      decoding="async"
                       className="w-20 h-20 sm:w-24 sm:h-24 md:w-26 md:h-26 object-contain rounded-none group-hover:scale-110 filter drop-shadow-[0_0_15px_rgba(147,51,234,0.7)] group-hover:drop-shadow-[0_0_25px_rgba(168,85,247,0.95)] transition-all duration-300 z-10" 
                       referrerPolicy="no-referrer" 
                     />
@@ -1673,6 +1713,8 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
                     <img 
                       src="/juri.png" 
                       alt="Juri" 
+                      loading="lazy"
+                      decoding="async"
                       className="w-20 h-20 sm:w-24 sm:h-24 md:w-26 md:h-26 object-contain rounded-none group-hover:scale-110 filter drop-shadow-[0_0_15px_rgba(245,158,11,0.7)] group-hover:drop-shadow-[0_0_25px_rgba(251,191,36,0.95)] transition-all duration-300 z-10" 
                       referrerPolicy="no-referrer" 
                     />
@@ -1709,6 +1751,8 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
                     <img 
                       src="/iconmonitor.png" 
                       alt="Monitor" 
+                      loading="lazy"
+                      decoding="async"
                       className="w-20 h-20 sm:w-24 sm:h-24 md:w-26 md:h-26 object-contain rounded-none group-hover:scale-110 filter drop-shadow-[0_0_15px_rgba(225,29,72,0.7)] group-hover:drop-shadow-[0_0_25px_rgba(244,63,94,0.95)] transition-all duration-300 z-10" 
                       referrerPolicy="no-referrer" 
                     />
@@ -1745,6 +1789,8 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
                     <img 
                       src={iconLaporan} 
                       alt="Laporan" 
+                      loading="lazy"
+                      decoding="async"
                       className="w-20 h-20 sm:w-24 sm:h-24 md:w-26 md:h-26 object-contain rounded-none group-hover:scale-110 filter drop-shadow-[0_0_15px_rgba(245,158,11,0.6)] group-hover:drop-shadow-[0_0_25px_rgba(251,191,36,0.95)] transition-all duration-300 z-10" 
                       onError={(e) => {
                         const target = e.currentTarget;
@@ -1778,6 +1824,17 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
                 </div>
 
               </div>
+            </div>
+
+            {/* DEVELOPED BY ATTRIBUTION */}
+            <div className="w-full text-center mt-2 mb-4 select-none" id="landing-developer-attribution">
+              <span className={`text-xs sm:text-sm font-semibold tracking-wide font-mono transition-colors ${
+                themeMode === "LIGHT_CONTRAST"
+                  ? "text-slate-600"
+                  : "text-slate-300"
+              }`}>
+                developed by : Jaka Oktorian
+              </span>
             </div>
 
           </main>
@@ -2245,8 +2302,9 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
       )}
 
       {/* 2. DYNAMIC SINGLE CONTAINER RENDERINGS BASED ON SELECTED ROLE */}
-      {appMode !== "LANDING" && appMode !== "SIMULATOR" && (
-        <div className={`flex-grow flex flex-col justify-center select-none ${
+      <React.Suspense fallback={<PanelLoadingFallback />}>
+        {appMode !== "LANDING" && appMode !== "SIMULATOR" && (
+          <div className={`flex-grow flex flex-col justify-center select-none ${
           nativeFs || isMonitorOnly || fullscreenMode || appMode.startsWith("JURY")
             ? "p-0 w-screen h-screen max-w-none overflow-hidden fixed inset-0 z-50" 
             : appMode === "DEWAN"
@@ -2501,6 +2559,7 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
           </div>
         </div>
       )}
+      </React.Suspense>
 
       {/* GENERAL WEB INSTRUCTIONS ACCORDING TO USER'S LARAGON SETUP (SIMULATOR ONLY) */}
       {appMode === "SIMULATOR" && !fullscreenMode && (
