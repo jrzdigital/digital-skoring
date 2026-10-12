@@ -713,7 +713,14 @@ export function subscribeToActiveMatch(
     channel = new BroadcastChannel(`jrz_match_sync_${arena}`);
     channel.onmessage = (ev) => {
       if (ev.data) {
-        callback(normalizeMatchState(ev.data));
+        const incoming = normalizeMatchState(ev.data);
+        const localCurrent = offlineEngine.getState() || readLocalMatch();
+        const { merged } = offlineEngine.reconcileMatchStates(
+          localCurrent,
+          incoming,
+          hasPendingCloudSync(arena)
+        );
+        callback(merged);
       }
     };
   } catch {}
@@ -727,7 +734,13 @@ export function subscribeToActiveMatch(
     ) {
       const latestLocal = readLocalMatch();
       if (latestLocal) {
-        callback(latestLocal);
+        const inMem = offlineEngine.getState();
+        const { merged } = offlineEngine.reconcileMatchStates(
+          inMem,
+          latestLocal,
+          hasPendingCloudSync(arena)
+        );
+        callback(merged);
       }
     }
   };
@@ -937,6 +950,11 @@ export async function pushJuryPressToFirebase(
           }
         } catch {}
       }, 2500);
+    } catch {}
+  } else if (db) {
+    try {
+      const pressRef = fbRef(db, `arenas/${arena}/activeJuryPresses/${juryId}`);
+      fbSet(pressRef, pressData).catch(() => {});
     } catch {}
   }
 }
@@ -1373,6 +1391,12 @@ function shouldSyncStorageKeyToRtdb(key: string): boolean {
   if (
     key.startsWith("ipsi_last_timer_tick_") ||
     key.startsWith("ipsi_pending_") ||
+    key.startsWith("ipsi_presence_") ||
+    key.startsWith("jrz_silat_match_state") ||
+    key.startsWith("ipsi_match_state") ||
+    key.startsWith("jrz_vault_history") ||
+    key.startsWith("jrz_jury_press_history") ||
+    key.startsWith("rtdb_") ||
     key === "ipsi_ui_session"
   ) {
     return false;

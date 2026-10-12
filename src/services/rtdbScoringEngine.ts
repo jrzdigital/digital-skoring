@@ -5,6 +5,7 @@
 
 import { MatchState, FighterColor, ActionType, MatchStatus } from "../types";
 import { offlineEngine } from "../utils/offlineEngine";
+import { getSyncedNow } from "../utils/defaultMatchState";
 import { 
   saveMatchStateToFirebase, 
   subscribeToActiveMatch,
@@ -42,6 +43,7 @@ class RtdbScoringEngine {
   private activeDevices: { [key: string]: { active: boolean; ip?: string; lastSeen: number } } = {};
   private currentMatchState: MatchState | null = null;
   private onMatchStateUpdatedListeners: ((state: MatchState) => void)[] = [];
+  private seenRemotePressMap: Record<string, number> = {};
 
   constructor() {
     this.initConnectionListener();
@@ -80,34 +82,122 @@ class RtdbScoringEngine {
     }
     this.unsubscribeJuryPresses = subscribeToJuryPresses((presses) => {
       if (!presses) return;
-      const current = this.currentMatchState || offlineEngine.getState();
-      if (!current || current.status !== MatchStatus.RUNNING) return;
+      const base = offlineEngine.getState() || this.currentMatchState;
+      if (!base) return;
 
+      const current: MatchState = JSON.parse(JSON.stringify(base));
       const now = Date.now();
-      let hasNewVisualIndicator = false;
+      const syncedNow = getSyncedNow();
+      let hasNewPressOrIndicator = false;
 
       if (!current.activeJuryPresses) {
         current.activeJuryPresses = { 1: null, 2: null, 3: null };
       }
+      if (!current.juryPressHistory) {
+        current.juryPressHistory = [];
+      }
+      if (!current.logs) {
+        current.logs = [];
+      }
 
       Object.entries(presses).forEach(([jStr, pData]) => {
         const jId = Number(jStr);
-        if (pData && pData.pressedAt && (now - pData.pressedAt) <= 2000) {
-          const existing = current.activeJuryPresses?.[jId];
-          if (!existing || existing.pressedAt !== pData.pressedAt) {
-            current.activeJuryPresses[jId] = {
+        if (!pData || !pData.pressedAt || (jId !== 1 && jId !== 2 && jId !== 3)) return;
+
+        const pressKey = `${jId}_${pData.pressedAt}`;
+        if (this.seenRemotePressMap[pressKey] === undefined) {
+          // Ignore stale presses older than 10 seconds on initial load, while tolerating clock skew across devices
+          if (Math.abs(syncedNow - pData.pressedAt) > 10000 && Math.abs(now - pData.pressedAt) > 10000) {
+            return;
+          }
+          this.seenRemotePressMap[pressKey] = Math.abs(now - pData.pressedAt) <= 1000 ? pData.pressedAt : now;
+        }
+
+        const effectivePressedAt = this.seenRemotePressMap[pressKey];
+        if (!effectivePressedAt || (now - effectivePressedAt) > 2000) return;
+
+        const existing = current.activeJuryPresses?.[jId] as any;
+        if (!existing || existing.pressedAt !== effectivePressedAt) {
+          current.activeJuryPresses[jId] = {
+            fighter: pData.fighter,
+            action: pData.action,
+            pressedAt: effectivePressedAt,
+            consumed: false
+          } as any;
+          hasNewPressOrIndicator = true;
+        }
+
+        if (current.status === MatchStatus.RUNNING) {
+          const alreadyInHistory = current.juryPressHistory!.some(
+            (h) =>
+              h.juryId === jId &&
+              h.fighter === pData.fighter &&
+              h.action === pData.action &&
+              Math.abs(h.timestamp - effectivePressedAt) <= 800
+          );
+          const alreadyInCountedLog = current.logs.some(
+            (l) =>
+              !l.uncounted &&
+              l.round === current.activeRound &&
+              l.fighter === pData.fighter &&
+              l.type === pData.action &&
+              Math.abs(l.timestamp - effectivePressedAt) <= 2000 &&
+              l.juryIds?.includes(jId)
+          );
+
+          const pressId = `press_${jId}_${effectivePressedAt}`;
+          if (!alreadyInHistory && !alreadyInCountedLog) {
+            current.juryPressHistory!.push({
+              id: pressId,
+              juryId: jId,
               fighter: pData.fighter,
               action: pData.action,
-              pressedAt: pData.pressedAt
-            };
-            hasNewVisualIndicator = true;
+              timestamp: effectivePressedAt,
+              consumed: false
+            });
+            hasNewPressOrIndicator = true;
+          }
+
+          const alreadyLoggedForJury = current.logs.some(
+            (l) =>
+              l.round === current.activeRound &&
+              l.fighter === pData.fighter &&
+              l.type === pData.action &&
+              Math.abs(l.timestamp - effectivePressedAt) <= 1500 &&
+              (l.source === `Juri ${jId}` || (!l.uncounted && l.juryIds?.includes(jId)))
+          );
+          if (!alreadyLoggedForJury) {
+            const pointValue = pData.action === "PUNCH" ? 1 : 2;
+            current.logs.unshift({
+              id: Math.random().toString(36).substring(7),
+              timestamp: effectivePressedAt,
+              round: current.activeRound,
+              fighter: pData.fighter,
+              description: `PERCOBAAN POIN: Juri ${jId} menekan ${pData.action === "PUNCH" ? "Pukulan" : "Tendangan"} ${pData.fighter === "RED" ? "Merah" : "Biru"} (Menunggu Konsensus <= 2 Detik)`,
+              points: pointValue,
+              source: `Juri ${jId}`,
+              type: pData.action,
+              uncounted: true,
+              pressId
+            });
+            hasNewPressOrIndicator = true;
           }
         }
       });
 
-      if (hasNewVisualIndicator) {
-        // Only update local visual indicator; consensus scoring is already executed atomically once by the server or originating offlineEngine
-        this.notifyMatchStateUpdated({ ...current });
+      if (hasNewPressOrIndicator) {
+        if (current.status === MatchStatus.RUNNING) {
+          const { state: evaluated, scored } = offlineEngine.evaluateAndApplyConsensus(current, now);
+          offlineEngine.stampStateMutation(evaluated, base);
+          offlineEngine.broadcast(evaluated, !scored);
+          this.notifyMatchStateUpdated(evaluated);
+          if (scored) {
+            this.syncInBackground(evaluated);
+          }
+        } else {
+          offlineEngine.broadcast(current, true);
+          this.notifyMatchStateUpdated(current);
+        }
       }
     }, this.arena);
   }
@@ -226,29 +316,55 @@ class RtdbScoringEngine {
     action: ActionType
   ): Promise<MatchState> {
     const now = Date.now();
+    const syncedNow = getSyncedNow();
+
+    // Ensure we merge any in-memory remote jury presses that arrived milliseconds ago
+    const latestInMem = offlineEngine.getState() || this.currentMatchState;
+    const { merged: baseState } = latestInMem
+      ? offlineEngine.reconcileMatchStates(latestInMem, currentState, true)
+      : { merged: currentState };
+
     // 1. Instant local calculation & P2P broadcast (0ms delay)
-    const updated = offlineEngine.processOfflineJuryPress(currentState, juryId, fighter, action);
+    const updated = offlineEngine.processOfflineJuryPress(baseState, juryId, fighter, action);
+    const localPressedAt = updated.activeJuryPresses?.[juryId]?.pressedAt || now;
+    this.seenRemotePressMap[`${juryId}_${syncedNow}`] = localPressedAt;
+    this.seenRemotePressMap[`${juryId}_${localPressedAt}`] = localPressedAt;
+
     this.notifyMatchStateUpdated(updated);
 
     // 2. Atomic push to Firebase Realtime Database (so juries never overwrite each other)
-    pushJuryPressToFirebase(juryId, fighter, action, now, this.arena).catch(() => {});
+    pushJuryPressToFirebase(juryId, fighter, action, syncedNow, this.arena).catch(() => {});
 
-    // 3. Hanya sinkronkan full state ke Firebase jika konsensus tercapai (scored)
-    // agar juri yang menekan pertama kali tidak menimpa nilai matchState lain sebelum juri kedua menekan!
+    // 3. Sinkronkan full state ke Firebase segera jika konsensus tercapai (scored)
+    // Jika belum konsensus (baru 1 juri menekan), jadwalkan sinkronisasi setelah jendela konsensus 2 detik selesai
+    // agar riwayat penekanan juri tetap tersimpan tanpa menimpa penekanan juri kedua di tengah jalan.
     const scored = updated.logs?.[0]?.uncounted === false && (now - updated.logs[0].timestamp) <= 2000;
     if (scored) {
       this.syncInBackground(updated);
+    } else {
+      const versionAtPress = updated.stateVersion;
+      setTimeout(() => {
+        const latest = offlineEngine.getState() || this.currentMatchState;
+        if (latest && latest.id === updated.id && latest.stateVersion === versionAtPress) {
+          this.syncInBackground(latest);
+        }
+      }, 2100);
     }
 
     // 4. Auto-clear visual indicator after 2.0 seconds
     const pressTime = updated.activeJuryPresses?.[juryId]?.pressedAt;
     setTimeout(() => {
       try {
-        const latest = this.currentMatchState || offlineEngine.getState();
+        const latest = offlineEngine.getState() || this.currentMatchState;
         if (latest && latest.activeJuryPresses && latest.activeJuryPresses[juryId]?.pressedAt === pressTime) {
-          latest.activeJuryPresses[juryId] = null;
-          offlineEngine.broadcast(latest);
-          this.notifyMatchStateUpdated(latest);
+          const cleaned: MatchState = {
+            ...latest,
+            activeJuryPresses: {
+              ...latest.activeJuryPresses,
+              [juryId]: null
+            }
+          };
+          this.notifyMatchStateUpdated(cleaned);
         }
       } catch {
         // ignore
@@ -265,6 +381,7 @@ class RtdbScoringEngine {
     fighter?: FighterColor
   ): Promise<MatchState> {
     const updated = offlineEngine.processOfflineJuryUndo(currentState, juryId, fighter);
+    this.notifyMatchStateUpdated(updated);
     this.syncInBackground(updated);
     return updated;
   }

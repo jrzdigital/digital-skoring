@@ -284,6 +284,7 @@ class OfflineScoringEngine {
 
     // 2. Broadcast across tabs instantly via BroadcastChannel (0-1ms latency)
     this.inMemoryState = state;
+    this.notifyListeners(state, false);
     if (this.channel) {
       try {
         this.channel.postMessage({
@@ -356,16 +357,20 @@ class OfflineScoringEngine {
     // Merge activeJuryPresses from both states (keep newest non-expired press per jury 1, 2, 3)
     const mergedPresses: MatchState["activeJuryPresses"] = { 1: null, 2: null, 3: null };
     [1, 2, 3].forEach((jId) => {
-      const lp = local.activeJuryPresses?.[jId];
-      const rp = remote.activeJuryPresses?.[jId];
-      const lpValid = lp && lp.pressedAt && now - lp.pressedAt <= 1600;
-      const rpValid = rp && rp.pressedAt && now - rp.pressedAt <= 1600;
+      const lp = local.activeJuryPresses?.[jId] as any;
+      const rp = remote.activeJuryPresses?.[jId] as any;
+      const lpValid = lp && lp.pressedAt && now - lp.pressedAt <= 2000;
+      const rpValid = rp && rp.pressedAt && now - rp.pressedAt <= 2000;
       if (lpValid && rpValid) {
-        mergedPresses[jId] = lp!.pressedAt >= rp!.pressedAt ? lp! : rp!;
+        const chosen = lp.pressedAt >= rp.pressedAt ? { ...lp } : { ...rp };
+        if (Math.abs(lp.pressedAt - rp.pressedAt) <= 800 && (lp.consumed || rp.consumed)) {
+          chosen.consumed = true;
+        }
+        mergedPresses[jId] = chosen;
       } else if (lpValid) {
-        mergedPresses[jId] = lp!;
+        mergedPresses[jId] = { ...lp };
       } else if (rpValid) {
-        mergedPresses[jId] = rp!;
+        mergedPresses[jId] = { ...rp };
       } else {
         mergedPresses[jId] = null;
       }
@@ -443,8 +448,30 @@ class OfflineScoringEngine {
     }
 
     // 2. Same Match ID (local.id === remote.id):
-    // Only prefer local state if we explicitly have pending offline changes while disconnected.
-    // Otherwise, remote state from the live server is authoritative (preventing timer stops & panel re-locks).
+    // Preserve local state if it has more scored actions in the current round (and remote isn't an explicit undo/cancel),
+    // or if we explicitly have pending offline changes while disconnected.
+    const hasNewerRemoteUndoOrCancel = (remote.logs || []).some(
+      (l) =>
+        l.timestamp > localUpdated - 500 &&
+        (l.description?.includes("BATAL ") || l.description?.includes("KOREKSI NILAI") || l.description?.includes("DIBATALKAN"))
+    );
+
+    if (
+      !hasNewerRemoteUndoOrCancel &&
+      local.activeRound === remote.activeRound &&
+      localActions > remoteActions &&
+      localUpdated >= remoteUpdated - 5000
+    ) {
+      return {
+        merged: {
+          ...local,
+          activeJuryPresses: mergedPresses,
+          juryPressHistory: mergedHistory
+        },
+        localIsNewer: true
+      };
+    }
+
     if (hasPendingOfflineChanges && localUpdated > remoteUpdated + 1500 && localActions >= remoteActions) {
       return {
         merged: {
@@ -465,12 +492,50 @@ class OfflineScoringEngine {
       }
     }
 
+    // Preserve any uncounted jury press logs from local in the current round that haven't been merged/consumed on remote yet
+    const mergedLogs = [...(remote.logs || [])];
+    (local.logs || []).forEach((lLog) => {
+      if (
+        lLog &&
+        lLog.uncounted &&
+        (lLog.type === "PUNCH" || lLog.type === "KICK") &&
+        lLog.round === remote.activeRound &&
+        lLog.source?.startsWith("Juri ")
+      ) {
+        const jId = parseInt(lLog.source.replace("Juri ", ""), 10);
+        const alreadyInRemote = mergedLogs.some(
+          (rLog) =>
+            rLog.id === lLog.id ||
+            (rLog.round === lLog.round &&
+              rLog.fighter === lLog.fighter &&
+              rLog.type === lLog.type &&
+              Math.abs((rLog.timestamp || 0) - (lLog.timestamp || 0)) <= 2000 &&
+              (rLog.source === lLog.source || (!rLog.uncounted && rLog.juryIds?.includes(jId))))
+        );
+        if (!alreadyInRemote) {
+          mergedLogs.push(lLog);
+        }
+      }
+    });
+    mergedLogs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
     const candidateMerged: MatchState = {
       ...remote,
       timeLeft: reconciledTimeLeft,
+      logs: mergedLogs,
       activeJuryPresses: mergedPresses,
       juryPressHistory: mergedHistory
     };
+
+    if (candidateMerged.status === MatchStatus.RUNNING) {
+      const { state: evaluated, scored } = this.evaluateAndApplyConsensus(candidateMerged, now);
+      if (scored) {
+        return {
+          merged: evaluated,
+          localIsNewer: true
+        };
+      }
+    }
 
     return {
       merged: candidateMerged,

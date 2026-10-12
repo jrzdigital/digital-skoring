@@ -432,13 +432,19 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
     prevTimeLeftRef.current = matchState.timeLeft;
   }, [matchState]);
 
-  // Autosave matchState to LocalStorage, SessionStorage & IndexedDB Auto-Save Vault on any change
+  // Autosave matchState to LocalStorage, SessionStorage & IndexedDB Auto-Save Vault on meaningful state changes
+  const lastVaultSigRef = useRef<string>("");
   useEffect(() => {
     if (matchState && matchState.id) {
-      try {
-        autoSaveVault.saveMatchState(matchState, activeArena, "STATE_AUTO_SAVE");
-      } catch (err) {
-        console.error("Gagal melakukan autosave ke Vault:", err);
+      rtdbScoringEngine.setCurrentMatchState(matchState);
+      const sig = `${matchState.id}_${matchState.stateVersion || 0}_${matchState.status}_${matchState.activeRound}_${matchState.scoreRed}_${matchState.scoreBlue}_${matchState.logs?.length || 0}_${matchState.juryPanelLocked}_${matchState.dewanPanelLocked}_${matchState.verification?.active || false}_${matchState.winnerPublished || false}_${matchState.timeLeft === 0 ? 0 : 1}`;
+      if (sig !== lastVaultSigRef.current) {
+        lastVaultSigRef.current = sig;
+        try {
+          autoSaveVault.saveMatchState(matchState, activeArena, "STATE_AUTO_SAVE");
+        } catch (err) {
+          console.error("Gagal melakukan autosave ke Vault:", err);
+        }
       }
     }
   }, [matchState, activeArena]);
@@ -667,10 +673,10 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
     };
   }, [currentUser]);
 
-  // Subscribe to Firebase Realtime Database active match state
+  // Subscribe to Firebase Realtime Database active match state & atomic jury press updates
   useEffect(() => {
     if (!currentUser) return;
-    const unsubMatch = rtdbScoringEngine.listenToActiveMatch((remoteState) => {
+    const applyIncomingState = (remoteState: MatchState) => {
       setMatchState(prev => {
         if (!prev) return remoteState;
         if (remoteState.status === "RUNNING") {
@@ -696,10 +702,14 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
       });
       setErrorMsg(null);
       setSyncCount(prev => prev + 1);
-    });
+    };
+
+    const unsubMatch = rtdbScoringEngine.listenToActiveMatch(applyIncomingState);
+    const unsubJuryUpdates = rtdbScoringEngine.subscribeMatchStateUpdates(applyIncomingState);
 
     return () => {
       unsubMatch();
+      unsubJuryUpdates();
     };
   }, [currentUser, activeArena]);
 
@@ -1081,7 +1091,8 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
   const lastHubJuryPressRef = useRef<Record<string, number>>({});
 
   const handleJuryPress = async (juryId: number, fighter: FighterColor, action: ActionType) => {
-    if (!matchState) return;
+    const baseState = matchStateRef.current || matchState || offlineEngine.getState();
+    if (!baseState) return;
     const now = Date.now();
     const comboKey = `${juryId}_${fighter}_${action}`;
     const anyKey = `${juryId}_ANY`;
@@ -1093,33 +1104,42 @@ export function MatchSimHub({ initialMode, onModeChange, isMonitorOnly = false, 
     const pressId = `press_${juryId}_${now}`;
 
     // 1. Eksekusi lokal & sinkronisasi Firebase Realtime Database INSTAN 0ms (Menjamin konsensus juri real-time di mode Firebase & GitHub)
-    const updated = await rtdbScoringEngine.handleJuryPress(matchState, juryId, fighter, action);
+    const updated = await rtdbScoringEngine.handleJuryPress(baseState, juryId, fighter, action);
     setMatchState(updated);
     offlineEngine.setState(updated);
 
-    // 2. Kirim ke backend Express / Node jika ada secara asinkron tanpa menahan proses konsensus / UI
-    fetch("/api/jury/press", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ juryId, fighter, action, pressId, timestamp: now })
-    })
-      .then(async (res) => {
-        if (res.ok) {
-          const ct = res.headers.get("content-type");
-          if (ct && ct.includes("application/json")) {
-            const serverState = await res.json();
-            if (serverState && serverState.id) {
-              const normalized = normalizeMatchState(serverState);
-              const { merged } = offlineEngine.reconcileMatchStates(offlineEngine.getState(), normalized);
-              setMatchState(merged);
-              offlineEngine.setState(merged);
+    // 2. Kirim ke backend Express / Node hanya jika berada di mode server lokal (bukan mode Firebase & GitHub statis)
+    const isFirebaseOrStaticMode =
+      typeof window !== "undefined" &&
+      (window.location.hostname.includes("github.io") ||
+        window.location.hostname.includes("web.app") ||
+        window.location.hostname.includes("firebaseapp.com") ||
+        (window as any).__JRZ_INDEX_MODE__ === "FIREBASE_GITHUB_SYNC");
+
+    if (!isFirebaseOrStaticMode) {
+      fetch("/api/jury/press", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ juryId, fighter, action, pressId, timestamp: now })
+      })
+        .then(async (res) => {
+          if (res.ok) {
+            const ct = res.headers.get("content-type");
+            if (ct && ct.includes("application/json")) {
+              const serverState = await res.json();
+              if (serverState && serverState.id && serverState.status === MatchStatus.RUNNING) {
+                const normalized = normalizeMatchState(serverState);
+                const { merged } = offlineEngine.reconcileMatchStates(offlineEngine.getState(), normalized, true);
+                setMatchState(merged);
+                offlineEngine.setState(merged);
+              }
             }
           }
-        }
-      })
-      .catch(() => {
-        // Mode Firebase murni / GitHub Pages tanpa server lokal
-      });
+        })
+        .catch(() => {
+          // Mode Firebase murni / GitHub Pages tanpa server lokal
+        });
+    }
 
     // Auto clear visual indicator from local React state after 2.0s
     const pressTime = updated.activeJuryPresses?.[juryId]?.pressedAt;

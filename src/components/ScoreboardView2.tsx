@@ -240,11 +240,9 @@ export function ScoreboardView2({ state, onBack, isMonitorMode = false }: Scoreb
             };
             changed = true;
           }
-        } else {
-          if (next[jId] !== null) {
-            next[jId] = null;
-            changed = true;
-          }
+        } else if (next[jId] !== null && next[jId]!.expireAt <= now) {
+          next[jId] = null;
+          changed = true;
         }
       });
       return changed ? next : prev;
@@ -268,16 +266,14 @@ export function ScoreboardView2({ state, onBack, isMonitorMode = false }: Scoreb
                 next[jId] = {
                   fighter: p.fighter,
                   action: p.action,
-                  expireAt: now + 1500,
+                  expireAt: now + 2000,
                   id: Math.random().toString(36).substring(7)
                 };
                 updated = true;
               }
-            } else {
-              if (next[jId] !== null) {
-                next[jId] = null;
-                updated = true;
-              }
+            } else if (next[jId] !== null && next[jId]!.expireAt <= now) {
+              next[jId] = null;
+              updated = true;
             }
           });
           return updated ? next : prev;
